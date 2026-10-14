@@ -67,10 +67,10 @@ test('only admins can view users latest login times', function () {
     $this->actingAs($admin, 'sanctum')
         ->getJson('/api/admin/login-activity')
         ->assertOk()
-        ->assertJsonCount(2, 'data')
+        ->assertJsonCount(1, 'data')
         ->assertJsonPath('data.0.email', 'login@example.test')
         ->assertJsonPath('data.0.role', 'user')
-        ->assertJsonPath('data.1.email', $admin->email);
+        ->assertJsonMissing(['email' => $admin->email]);
 
     $this->actingAs($user, 'sanctum')
         ->getJson('/api/admin/login-activity')

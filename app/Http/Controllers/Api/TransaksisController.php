@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreTransaksiRequest;
+use App\Http\Requests\UpdatePaymentStatusRequest;
 use App\Http\Requests\UpdateTransaksiStatusRequest;
 use App\Http\Resources\TransaksiResource;
 use App\Services\TransaksisService;
@@ -22,10 +23,25 @@ class TransaksisController extends Controller
     public function index(Request $request)
     {
         try {
-            $data = $this->service->getMyTransaksi($request->user()->id);
+            $search = trim((string) $request->query('search', ''));
+            $data = $request->user()->isAdmin()
+                ? $this->service->getAllTransaksi($search)
+                : $this->service->getMyTransaksi($request->user()->id, $search);
 
             return response()->json([
                 'status' => true,
+                'active_transactions_count' => $this->service->countActiveTransactions(
+                    $request->user()->isAdmin() ? null : $request->user()->id,
+                ),
+                'top_selling_food' => $request->user()->isAdmin()
+                    ? null
+                    : $this->service->topSellingFood(),
+                'pagination' => [
+                    'current_page' => $data->currentPage(),
+                    'last_page' => $data->lastPage(),
+                    'per_page' => $data->perPage(),
+                    'total' => $data->total(),
+                ],
                 'data' => TransaksiResource::collection($data),
             ], 200);
         } catch (\Throwable $exception) {
@@ -98,7 +114,29 @@ class TransaksisController extends Controller
                 return response()->json([
                     'status' => false,
                     'message' => $result['message'],
-                ], 404);
+                ], $result['http_status'] ?? 404);
+            }
+
+            return response()->json([
+                'status' => true,
+                'message' => $result['message'],
+                'data' => new TransaksiResource($result['data']),
+            ], 200);
+        } catch (\Throwable $exception) {
+            return $this->serverError($exception);
+        }
+    }
+
+    public function updatePaymentStatus(UpdatePaymentStatusRequest $request, $id)
+    {
+        try {
+            $result = $this->service->updatePaymentStatus($id, $request->validated()['status']);
+
+            if (! $result['success']) {
+                return response()->json([
+                    'status' => false,
+                    'message' => $result['message'],
+                ], $result['http_status'] ?? 404);
             }
 
             return response()->json([

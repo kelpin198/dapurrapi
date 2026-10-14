@@ -34,4 +34,4 @@ RUN mkdir -p storage/framework/cache storage/framework/sessions storage/framewor
 
 EXPOSE 10000
 
-CMD ["sh", "-c", "php artisan migrate --force && php artisan db:seed --class=RenderAdminSeeder --force && exec php artisan serve --host=0.0.0.0 --port=${PORT:-10000}"]
+CMD ["sh", "-c", "php artisan migrate --force && php artisan db:seed --class=RenderAdminSeeder --force && (php artisan schedule:work >> storage/logs/scheduler.log 2>&1 &) && exec php artisan serve --host=0.0.0.0 --port=${PORT:-10000}"]

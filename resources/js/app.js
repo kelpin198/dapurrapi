@@ -2,6 +2,7 @@ import "./bootstrap";
 
 const authTokenKey = "dapurRapiToken";
 const authUserKey = "dapurRapiUser";
+let currentTransactionPage = 1;
 window.dapurRapiFoods = [];
 window.dapurRapiCategories = [];
 window.dapurRapiToken = sessionStorage.getItem(authTokenKey);
@@ -314,6 +315,7 @@ function renderOverview(
     transactions,
     foodTotal,
     transactionTotal,
+    topSellingFood,
 ) {
     const threshold = Number(
         document.querySelector("[data-low-stock-alert]")?.dataset
@@ -322,10 +324,13 @@ function renderOverview(
     const lowStockFoods = foods
         .filter((food) => Number(food.stok) <= threshold)
         .sort((first, second) => first.stok - second.stok);
+    const isAdmin = window.dapurRapiUserRole === "admin";
     const metrics = {
         foods: foodTotal,
         categories: categories.length,
-        "low-stock": lowStockFoods.length,
+        "low-stock": isAdmin
+            ? lowStockFoods.length
+            : Number(topSellingFood?.quantity_sold ?? 0),
         transactions: transactionTotal,
     };
 
@@ -333,11 +338,16 @@ function renderOverview(
         const node = document.querySelector(`[data-metric="${key}"]`);
         if (node) node.textContent = value.toLocaleString("id-ID");
     });
+    document.querySelector('[data-metric-label="low-stock"]').textContent =
+        isAdmin ? "Stok menipis" : "Menu terlaris";
+    document.querySelector('[data-metric-icon="low-stock"]').textContent =
+        isAdmin ? "⌁" : "★";
     document.querySelector('[data-metric-note="low-stock"]').textContent =
-        `dari ${foods.length} menu di halaman ini`;
+        isAdmin
+            ? `dari ${foods.length} menu di halaman ini`
+            : (topSellingFood?.nama_makanan ?? "Belum ada pesanan");
 
     const lowStockAlert = document.querySelector("[data-low-stock-alert]");
-    const isAdmin = window.dapurRapiUserRole === "admin";
     lowStockAlert.hidden = !isAdmin || lowStockFoods.length === 0;
     if (isAdmin && lowStockFoods.length > 0) {
         document.querySelector("[data-low-stock-alert-text]").textContent =
@@ -427,18 +437,57 @@ function renderCategories(categories, foods) {
         .join("");
 }
 
-function renderTransactions(transactions) {
+function renderTransactions(transactions, pagination = {}) {
     const body = document.querySelector("[data-transaction-rows]");
     if (!body) return;
+
+    currentTransactionPage = Number(pagination.current_page ?? 1);
+    const lastPage = Number(pagination.last_page ?? 1);
+    const paginationControls = document.querySelector(
+        "[data-transaction-pagination]",
+    );
+
+    if (paginationControls) {
+        paginationControls.hidden = lastPage <= 1;
+        paginationControls.querySelector(
+            "[data-transaction-previous]",
+        ).disabled = currentTransactionPage <= 1;
+        paginationControls.querySelector("[data-transaction-next]").disabled =
+            currentTransactionPage >= lastPage;
+        paginationControls.querySelector(
+            "[data-transaction-page-label]",
+        ).textContent =
+            `Halaman ${currentTransactionPage} dari ${lastPage} · ${Number(pagination.total ?? transactions.length).toLocaleString("id-ID")} transaksi`;
+    }
+
+    const isAdmin = window.dapurRapiUserRole === "admin";
+    const columns = isAdmin ? 7 : 6;
+    const headers = document.querySelector("[data-transaction-head]");
+
+    if (headers) {
+        headers.innerHTML = isAdmin
+            ? "<th>Nomor</th><th>Pemesan</th><th>Makanan</th><th>Tanggal</th><th>Total</th><th>Status pesanan</th><th>Pembayaran</th>"
+            : "<th>Nomor</th><th>Makanan</th><th>Tanggal</th><th>Total</th><th>Status pesanan</th><th>Pembayaran</th>";
+    }
 
     if (transactions.length === 0) {
         setTableMessage(
             "[data-transaction-rows]",
-            "Belum ada transaksi pada akun ini.",
-            4,
+            isAdmin
+                ? "Belum ada transaksi dari pengguna."
+                : "Belum ada transaksi pada akun ini.",
+            columns,
         );
+        filterTransactions();
         return;
     }
+
+    const statusOptions = [
+        ["pending", "Menunggu"],
+        ["diproses", "Diproses"],
+        ["selesai", "Selesai"],
+        ["dibatalkan", "Dibatalkan"],
+    ];
 
     body.innerHTML = [...transactions]
         .reverse()
@@ -449,17 +498,149 @@ function renderTransactions(transactions) {
             )
                 ? "is-ok"
                 : "is-pending";
+            const statusLabel =
+                statusOptions.find(([value]) => value === status)?.[1] ??
+                status;
+            const payment = transaction.payments?.at(-1);
+            const paymentMethods = {
+                bank_transfer: "Transfer bank",
+                qris: "QRIS",
+                cash_on_pickup: "Tunai saat ambil",
+            };
+            const paymentStatuses = {
+                pending: "Menunggu pembayaran",
+                processing: "Memeriksa pembayaran",
+                paid: "Lunas",
+                failed: "Gagal",
+                expired: "Kedaluwarsa",
+                refunded: "Dikembalikan",
+            };
+            const paymentStatusOptions = Object.entries(paymentStatuses);
+            const isRefunded = payment?.status === "refunded";
+            const isCompletedOrPaid =
+                status === "selesai" || payment?.status === "paid";
+            const isLocked = isRefunded || isCompletedOrPaid;
+            const foodItems = transaction.items?.length
+                ? `<ul class="transaction-food-list">${transaction.items
+                      .map(
+                          (item) =>
+                              `<li><span>${escapeHtml(item.nama_makanan ?? "Menu dihapus")}</span><small>× ${escapeHtml(item.qty)}</small></li>`,
+                      )
+                      .join("")}</ul>`
+                : '<span class="transaction-food-empty">Rincian tidak tersedia</span>';
+            const statusDisplay = isAdmin
+                ? `<select class="text-field transaction-status" data-transaction-status="${Number(transaction.id)}" data-current-status="${escapeHtml(status)}" aria-label="Ubah status transaksi ${escapeHtml(String(transaction.id))}" ${isLocked ? `disabled title="${isRefunded ? "Transaksi sudah dikembalikan" : "Transaksi sudah selesai/lunas"}"` : ""}>${statusOptions
+                      .map(
+                          ([value, label]) =>
+                              `<option value="${value}" ${value === status ? "selected" : ""}>${label}</option>`,
+                      )
+                      .join("")}</select>`
+                : `<span class="status-pill ${statusClass}">${escapeHtml(statusLabel)}</span>`;
+            const paymentDisplay = payment
+                ? `<span class="payment-method-label">${escapeHtml(paymentMethods[payment.payment_method] ?? payment.payment_method)}</span>${
+                      isAdmin
+                          ? `<select class="text-field payment-status-select" data-transaction-payment-status="${Number(transaction.id)}" data-current-status="${escapeHtml(payment.status)}" aria-label="Ubah status pembayaran transaksi ${escapeHtml(String(transaction.id))}" ${isLocked ? `disabled title="${isRefunded ? "Pembayaran sudah dikembalikan" : "Transaksi sudah selesai/lunas"}"` : ""}>${paymentStatusOptions
+                                .map(
+                                    ([value, label]) =>
+                                        `<option value="${value}" ${value === payment.status ? "selected" : ""}>${escapeHtml(label)}</option>`,
+                                )
+                                .join("")}</select>`
+                          : `<small class="payment-status-label ${["failed", "expired"].includes(payment.status) ? "is-failed" : ""}">${escapeHtml(paymentStatuses[payment.status] ?? payment.status)}</small>`
+                  }`
+                : '<span class="payment-status-label">Belum ada data</span>';
 
             return `
-			<tr>
+            <tr class="${isAdmin && isRefunded ? "transaction-row-refunded" : isAdmin && isCompletedOrPaid ? "transaction-row-completed" : ""}" ${isAdmin && isLocked ? 'aria-disabled="true"' : ""}>
 				<td>#${escapeHtml(String(transaction.id).padStart(4, "0"))}</td>
+                ${isAdmin ? `<td>${escapeHtml(transaction.user?.name ?? "Pengguna")}</td>` : ""}
+                <td>${foodItems}</td>
 				<td>${escapeHtml(formatDate(transaction.created_at))}</td>
 				<td>${escapeHtml(formatCurrency(transaction.total_harga))}</td>
-				<td><span class="status-pill ${statusClass}">${escapeHtml(status)}</span></td>
+				<td>${statusDisplay}</td>
+                <td>${paymentDisplay}</td>
 			</tr>
 		`;
         })
         .join("");
+
+    filterTransactions();
+}
+
+function transactionRequestPath(page) {
+    const params = new URLSearchParams({ page: String(page) });
+    const search = document
+        .querySelector("[data-transaction-search]")
+        ?.value.trim();
+
+    if (search) params.set("search", search);
+
+    return `transaksis?${params.toString()}`;
+}
+
+async function loadTransactionPage(page) {
+    const previousButton = document.querySelector(
+        "[data-transaction-previous]",
+    );
+    const nextButton = document.querySelector("[data-transaction-next]");
+    previousButton.disabled = true;
+    nextButton.disabled = true;
+
+    try {
+        const payload = await requestApi(transactionRequestPath(page), {
+            token: window.dapurRapiToken,
+        });
+        renderTransactions(unwrapData(payload), payload.pagination);
+
+        const activeCount = document.querySelector(
+            '[data-metric="transactions"]',
+        );
+        if (activeCount && payload.active_transactions_count !== undefined) {
+            activeCount.textContent = Number(
+                payload.active_transactions_count,
+            ).toLocaleString("id-ID");
+        }
+    } catch (error) {
+        previousButton.disabled = currentTransactionPage <= 1;
+        nextButton.disabled = false;
+        showDashboardNotice(error.message);
+    }
+}
+
+function filterTransactions() {
+    const body = document.querySelector("[data-transaction-rows]");
+    const tools = document.querySelector("[data-admin-transaction-tools]");
+    if (!body || !tools || tools.hidden) return;
+
+    const query = document
+        .querySelector("[data-transaction-search]")
+        .value.trim()
+        .toLocaleLowerCase("id-ID");
+    const selectedStatus = document.querySelector(
+        "[data-transaction-status-filter]",
+    ).value;
+    const rows = [...body.querySelectorAll("tr")].filter(
+        (row) => !row.querySelector(".table-empty, .table-loading"),
+    );
+    let visibleCount = 0;
+
+    rows.forEach((row) => {
+        const status = row.querySelector("[data-transaction-status]")?.value;
+        const rowText = [...row.cells]
+            .map((cell) => {
+                const select = cell.querySelector("select");
+                return (
+                    select?.selectedOptions[0]?.textContent ?? cell.textContent
+                );
+            })
+            .join(" ");
+        const matchesQuery = rowText.toLocaleLowerCase("id-ID").includes(query);
+        const matchesStatus = !selectedStatus || status === selectedStatus;
+        row.hidden = !(matchesQuery && matchesStatus);
+        if (!row.hidden) visibleCount += 1;
+    });
+
+    document.querySelector("[data-transaction-result-count]").textContent =
+        `${visibleCount.toLocaleString("id-ID")} dari ${rows.length.toLocaleString("id-ID")} pesanan`;
 }
 
 function renderLoginActivity(users) {
@@ -491,9 +672,19 @@ function renderLoginActivity(users) {
 
 function renderProfile(profile) {
     const nameParts = profile.name.trim().split(/\s+/);
+    const hour = new Date().getHours();
+    const greeting =
+        hour >= 5 && hour < 11
+            ? "Selamat pagi"
+            : hour >= 11 && hour < 15
+              ? "Selamat siang"
+              : hour >= 15 && hour < 18
+                ? "Selamat sore"
+                : "Selamat malam";
 
     document.querySelector("[data-user-name]").textContent = profile.name;
     document.querySelector("[data-user-email]").textContent = profile.email;
+    document.querySelector("[data-greeting-label]").textContent = greeting;
     document.querySelector("[data-greeting-name]").textContent = nameParts[0];
     document.querySelector("[data-avatar]").textContent = nameParts
         .slice(0, 2)
@@ -508,14 +699,19 @@ async function loadDashboardData(token) {
             requestApi("me", { token }),
             requestApi("makanans", { token }),
             requestApi("kategoris", { token }),
-            requestApi("transaksis", { token }),
+            requestApi(transactionRequestPath(currentTransactionPage), {
+                token,
+            }),
         ]);
     const profile = profilePayload.data;
     const foods = unwrapData(foodPayload);
     const categories = unwrapData(categoryPayload);
     const transactions = unwrapData(transactionPayload);
     const foodTotal = collectionTotal(foodPayload, foods);
-    const transactionTotal = collectionTotal(transactionPayload, transactions);
+    const transactionTotal = Number(
+        transactionPayload.active_transactions_count ??
+            collectionTotal(transactionPayload, transactions),
+    );
 
     window.dapurRapiFoods = foods;
     window.dapurRapiCategories = categories;
@@ -529,12 +725,22 @@ async function loadDashboardData(token) {
         window.dapurRapiUserRole !== "admin";
     document.querySelector("[data-login-activity-nav]").hidden =
         window.dapurRapiUserRole !== "admin";
+    document.querySelector("[data-admin-transaction-tools]").hidden =
+        window.dapurRapiUserRole !== "admin";
     document.querySelector("[data-create-food]").hidden =
         window.dapurRapiUserRole !== "admin";
     document.querySelector("[data-create-category]").hidden =
         window.dapurRapiUserRole !== "admin";
     document.querySelector('[data-count="foods"]').textContent =
         foodTotal.toLocaleString("id-ID");
+    document.querySelector("[data-transactions-description]").textContent =
+        window.dapurRapiUserRole === "admin"
+            ? "Pesanan semua pengguna dan pengelolaan status transaksi."
+            : "Riwayat transaksi yang tercatat di akunmu.";
+    document.querySelector("[data-transactions-heading]").textContent =
+        window.dapurRapiUserRole === "admin"
+            ? "Semua pesanan"
+            : "Transaksi saya";
 
     renderOverview(
         foods,
@@ -542,10 +748,11 @@ async function loadDashboardData(token) {
         transactions,
         foodTotal,
         transactionTotal,
+        transactionPayload.top_selling_food,
     );
     renderFoodsTable(foods, foodTotal);
     renderCategories(categories, foods);
-    renderTransactions(transactions);
+    renderTransactions(transactions, transactionPayload.pagination);
 
     if (window.dapurRapiUserRole === "admin") {
         try {
@@ -610,7 +817,148 @@ function openCategoryDialog(category = null) {
     document.querySelector("[data-category-dialog]").showModal();
 }
 
+function setPurchaseStep(step) {
+    const isPaymentStep = step === "payment";
+    document.querySelectorAll("[data-purchase-step]").forEach((section) => {
+        section.hidden = section.dataset.purchaseStep !== step;
+    });
+    document.querySelector("[data-purchase-eyebrow]").textContent =
+        isPaymentStep ? "LANGKAH 2 DARI 2" : "LANGKAH 1 DARI 2";
+    document.querySelector("[data-purchase-title]").textContent = isPaymentStep
+        ? "Pembayaran"
+        : "Pesanan";
+}
+
+function updatePaymentSummary() {
+    const foodId = Number(document.querySelector("[data-purchase-id]").value);
+    const quantity = Number(document.querySelector('[name="qty"]').value);
+    const food = window.dapurRapiFoods.find(
+        (item) => Number(item.id) === foodId,
+    );
+    if (!food) return;
+
+    const total = Number(food.harga) * quantity;
+    document.querySelector("[data-payment-item-name]").textContent =
+        food.nama_makanan;
+    document.querySelector("[data-payment-item-quantity]").textContent =
+        `${quantity} × ${formatCurrency(food.harga)}`;
+    document.querySelector("[data-payment-total]").textContent =
+        formatCurrency(total);
+    updatePaymentInstructions();
+}
+
+function updatePaymentInstructions() {
+    const method = document.querySelector(
+        '[name="payment_method"]:checked',
+    )?.value;
+    const settings = JSON.parse(
+        document.querySelector("[data-payment-settings]").textContent,
+    );
+    const bankPanel = document.querySelector("[data-bank-payment-panel]");
+    const qrisPanel = document.querySelector("[data-qris-payment-panel]");
+    const accountDetails = document.querySelector(
+        "[data-payment-account-details]",
+    );
+    const account = settings.banks[0];
+    bankPanel.hidden = method !== "bank_transfer";
+    qrisPanel.hidden = method !== "qris";
+    accountDetails.hidden = method !== "bank_transfer" || !account;
+    document.querySelector("[data-bank-unavailable]").hidden =
+        method !== "bank_transfer" || Boolean(account);
+
+    if (account) {
+        document.querySelector("[data-payment-bank-name]").textContent =
+            account.name;
+        document.querySelector("[data-payment-account-number]").textContent =
+            account.account_number;
+        document.querySelector("[data-payment-account-name]").textContent =
+            account.account_name;
+    }
+
+    const qrisImage = document.querySelector("[data-qris-code]");
+    const qrisUnavailable = document.querySelector("[data-qris-unavailable]");
+    const hasQrisImage = Boolean(settings.qrisImageUrl);
+    const hasQrisSource = hasQrisImage || Boolean(settings.qrisPayload);
+    qrisImage.hidden = method !== "qris" || !hasQrisSource;
+    qrisUnavailable.hidden = method !== "qris" || hasQrisSource;
+
+    if (method === "qris" && hasQrisSource) {
+        qrisImage.src = hasQrisImage
+            ? settings.qrisImageUrl
+            : `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(settings.qrisPayload)}`;
+    }
+
+    const instructions = {
+        bank_transfer: account
+            ? `Transfer tepat ${document.querySelector("[data-payment-total]").textContent} dari bank mana pun ke rekening ${account.name} yang tertera.`
+            : "Transfer bank belum aktif.",
+        qris: hasQrisSource
+            ? "Pindai QRIS merchant, lalu bayar sesuai total pesanan. Pembayaran belum diverifikasi otomatis."
+            : "QRIS belum dikonfigurasi pengelola.",
+        cash_on_pickup:
+            "Pesanan dicatat menunggu pembayaran. Siapkan pembayaran tunai saat mengambil pesanan.",
+    };
+
+    document.querySelector("[data-payment-instructions]").textContent =
+        instructions[method] ?? instructions.cash_on_pickup;
+    document.querySelector("[data-payment-confirm]").disabled =
+        (method === "bank_transfer" && !account) ||
+        (method === "qris" && !hasQrisSource);
+}
+
+function initializePaymentMethods() {
+    const settings = JSON.parse(
+        document.querySelector("[data-payment-settings]").textContent,
+    );
+    const bankMethod = document.querySelector(
+        '[name="payment_method"][value="bank_transfer"]',
+    );
+    const qrisMethod = document.querySelector(
+        '[name="payment_method"][value="qris"]',
+    );
+
+    bankMethod.disabled = false;
+    qrisMethod.disabled = false;
+    document.querySelector("[data-bank-method-hint]").textContent =
+        settings.banks.length > 0
+            ? "Transfer dari bank mana pun ke rekening tujuan ini"
+            : "Rekening tujuan belum tersedia";
+    document.querySelector("[data-qris-method-hint]").textContent =
+        settings.qrisImageUrl || settings.qrisPayload
+            ? "Pindai QRIS merchant"
+            : "Belum tersedia: QRIS merchant belum dikonfigurasi";
+
+    updatePaymentInstructions();
+}
+
 function initializeDashboardActions() {
+    if (!document.querySelector("[data-dashboard]")) return;
+
+    initializePaymentMethods();
+    let transactionSearchTimeout;
+    document
+        .querySelector("[data-transaction-search]")
+        ?.addEventListener("input", () => {
+            window.clearTimeout(transactionSearchTimeout);
+            transactionSearchTimeout = window.setTimeout(
+                () => loadTransactionPage(1),
+                250,
+            );
+        });
+    document
+        .querySelector("[data-transaction-status-filter]")
+        ?.addEventListener("change", filterTransactions);
+    document
+        .querySelector("[data-transaction-previous]")
+        ?.addEventListener("click", () =>
+            loadTransactionPage(Math.max(1, currentTransactionPage - 1)),
+        );
+    document
+        .querySelector("[data-transaction-next]")
+        ?.addEventListener("click", () =>
+            loadTransactionPage(currentTransactionPage + 1),
+        );
+
     document
         .querySelector("[data-profile-open]")
         ?.addEventListener("click", () => {
@@ -714,13 +1062,64 @@ function initializeDashboardActions() {
                 document.querySelector("[data-purchase-name]").textContent =
                     food.nama_makanan;
                 document.querySelector("[data-purchase-price]").textContent =
-                    `${formatCurrency(food.harga)} · stok ${food.stok} unit`;
+                    `${formatCurrency(food.harga)} per porsi · stok ${food.stok} unit`;
                 const quantity = document.querySelector('[name="qty"]');
                 quantity.max = food.stok;
                 quantity.value = "1";
+                const paymentSettings = JSON.parse(
+                    document.querySelector("[data-payment-settings]")
+                        .textContent,
+                );
+                const defaultMethod = paymentSettings.banks.length
+                    ? "bank_transfer"
+                    : paymentSettings.qrisPayload
+                      ? "qris"
+                      : "cash_on_pickup";
+                document.querySelector(
+                    `[name="payment_method"][value="${defaultMethod}"]`,
+                ).checked = true;
+                updatePaymentInstructions();
+                setPurchaseStep("details");
+                updatePaymentSummary();
                 document.querySelector("[data-purchase-dialog]").showModal();
             }
         });
+
+    document
+        .querySelector('[name="qty"]')
+        ?.addEventListener("input", updatePaymentSummary);
+    document
+        .querySelectorAll('[name="payment_method"]')
+        .forEach((option) =>
+            option.addEventListener("change", updatePaymentInstructions),
+        );
+
+    document
+        .querySelector("[data-payment-next]")
+        ?.addEventListener("click", () => {
+            const quantity = Number(
+                document.querySelector('[name="qty"]').value,
+            );
+            const food = window.dapurRapiFoods.find(
+                (item) =>
+                    Number(item.id) ===
+                    Number(document.querySelector("[data-purchase-id]").value),
+            );
+
+            if (!food || quantity < 1 || quantity > Number(food.stok)) {
+                showDashboardNotice(
+                    "Jumlah pesanan melebihi stok yang tersedia.",
+                );
+                return;
+            }
+
+            updatePaymentSummary();
+            setPurchaseStep("payment");
+        });
+
+    document
+        .querySelector("[data-payment-back]")
+        ?.addEventListener("click", () => setPurchaseStep("details"));
 
     document
         .querySelector("[data-category-grid]")
@@ -753,6 +1152,73 @@ function initializeDashboardActions() {
                 await loadDashboardData(window.dapurRapiToken);
             } catch (error) {
                 showDashboardNotice(error.message);
+            }
+        });
+
+    document
+        .querySelector("[data-transaction-rows]")
+        ?.addEventListener("change", async (event) => {
+            const paymentSelect = event.target.closest(
+                "[data-transaction-payment-status]",
+            );
+
+            if (paymentSelect) {
+                const transactionId = Number(
+                    paymentSelect.dataset.transactionPaymentStatus,
+                );
+                const previousStatus = paymentSelect.dataset.currentStatus;
+                const status = paymentSelect.value;
+                if (status === previousStatus) return;
+
+                paymentSelect.disabled = true;
+                try {
+                    await requestApi(
+                        `transaksis/${transactionId}/payment-status`,
+                        {
+                            method: "PUT",
+                            token: window.dapurRapiToken,
+                            body: JSON.stringify({ status }),
+                        },
+                    );
+                    showDashboardNotice(
+                        "Status pembayaran berhasil diperbarui.",
+                        "success",
+                    );
+                    await loadDashboardData(window.dapurRapiToken);
+                } catch (error) {
+                    paymentSelect.value = previousStatus;
+                    showDashboardNotice(error.message);
+                } finally {
+                    paymentSelect.disabled = false;
+                }
+                return;
+            }
+
+            const select = event.target.closest("[data-transaction-status]");
+            if (!select) return;
+
+            const transactionId = Number(select.dataset.transactionStatus);
+            const previousStatus = select.dataset.currentStatus;
+            const status = select.value;
+            if (status === previousStatus) return;
+
+            select.disabled = true;
+            try {
+                await requestApi(`transaksis/${transactionId}/status`, {
+                    method: "PUT",
+                    token: window.dapurRapiToken,
+                    body: JSON.stringify({ status }),
+                });
+                showDashboardNotice(
+                    "Status transaksi berhasil diperbarui.",
+                    "success",
+                );
+                await loadDashboardData(window.dapurRapiToken);
+            } catch (error) {
+                select.value = previousStatus;
+                showDashboardNotice(error.message);
+            } finally {
+                select.disabled = false;
             }
         });
 
@@ -853,22 +1319,35 @@ function initializeDashboardActions() {
                 return;
             }
 
-            button.disabled = true;
-            try {
-                await requestApi("transaksis", {
-                    method: "POST",
-                    token: window.dapurRapiToken,
-                    body: JSON.stringify({
-                        items: [{ makanan_id: foodId, qty: quantity }],
-                    }),
-                });
-                document.querySelector("[data-purchase-dialog]").close();
-                showDashboardNotice("Pesanan berhasil dibuat.", "success");
-                await loadDashboardData(window.dapurRapiToken);
-            } catch (error) {
-                showDashboardNotice(error.message);
-            } finally {
-                button.disabled = false;
+            const paymentMethod = document.querySelector(
+                '[name="payment_method"]:checked',
+            ).value;
+
+            if (
+                !document.querySelector('[data-purchase-step="payment"]').hidden
+            ) {
+                button.disabled = true;
+                try {
+                    await requestApi("transaksis", {
+                        method: "POST",
+                        token: window.dapurRapiToken,
+                        body: JSON.stringify({
+                            items: [{ makanan_id: foodId, qty: quantity }],
+                            payment_method: paymentMethod,
+                        }),
+                    });
+                    document.querySelector("[data-purchase-dialog]").close();
+                    showDashboardNotice(
+                        "Pesanan tercatat. Silakan konfirmasi pembayaran dengan pengelola.",
+                        "success",
+                    );
+                    await loadDashboardData(window.dapurRapiToken);
+                } catch (error) {
+                    showDashboardNotice(error.message);
+                } finally {
+                    button.disabled = false;
+                }
+                return;
             }
         });
 }

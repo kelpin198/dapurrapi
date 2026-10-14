@@ -12,4 +12,7 @@ Artisan::command('inspire', function () {
 Schedule::command('makanans:check-stock')
     ->everyMinute()
     ->appendOutputTo(storage_path('logs/check-stock.log'));
+Schedule::command('payments:refund-terminal')
+    ->everyTenSeconds()
+    ->withoutOverlapping();
 Schedule::command(AutoDropLowStockCommand::class)->hourly();

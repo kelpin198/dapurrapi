@@ -210,6 +210,7 @@ class AuthController extends Controller
             'status' => true,
             'message' => 'Aktivitas login berhasil diambil',
             'data' => User::query()
+                ->where('role', 'user')
                 ->select(['id', 'name', 'email', 'role', 'last_login_at'])
                 ->orderByDesc('last_login_at')
                 ->orderBy('name')

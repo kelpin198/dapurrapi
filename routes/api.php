@@ -46,5 +46,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/kategoris/bulk', [KategorisController::class, 'storeBatch']);
 
         Route::put('/transaksis/{id}/status', [TransaksisController::class, 'updateStatus']);
+        Route::put('/transaksis/{id}/payment-status', [TransaksisController::class, 'updatePaymentStatus']);
     });
 });

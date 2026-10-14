@@ -32,14 +32,14 @@
         <div class="dashboard-content">
             <section class="page-panel is-visible" data-panel="overview">
                 <div class="page-heading">
-                    <div><span class="eyebrow">DASHBOARD</span><h1>Selamat pagi, <span data-greeting-name>Dapur</span><span class="heading-period">.</span></h1><p>Berikut gambaran kecil tentang dapurmu hari ini.</p></div>
+                    <div><span class="eyebrow">DASHBOARD</span><h1><span data-greeting-label>Selamat pagi</span>, <span data-greeting-name>Dapur</span><span class="heading-period">.</span></h1><p>Berikut gambaran kecil tentang dapurmu hari ini.</p></div>
                     <button class="button button-primary" type="button" data-switch-page="foods"><span>Kelola makanan</span><span aria-hidden="true">↗</span></button>
                 </div>
                 <div class="low-stock-alert" data-low-stock-alert data-low-stock-threshold="{{ config('inventory.low_stock_threshold') }}" role="alert" hidden><span class="low-stock-alert-mark" aria-hidden="true">!</span><p data-low-stock-alert-text></p><button class="text-action" type="button" data-switch-page="foods">Lihat stok <span aria-hidden="true">→</span></button></div>
                 <div class="overview-grid">
                     <article class="metric metric-main"><div class="metric-top"><span>Total menu aktif</span><span class="metric-icon metric-icon-green" aria-hidden="true">◫</span></div><strong class="metric-number" data-metric="foods">—</strong><span class="metric-note">makanan dalam daftar</span><div class="metric-rule"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div></article>
                     <article class="metric"><div class="metric-top"><span>Kategori</span><span class="metric-icon metric-icon-yellow" aria-hidden="true">▦</span></div><strong class="metric-number" data-metric="categories">—</strong><span class="metric-note">kelompok menu</span></article>
-                    <article class="metric"><div class="metric-top"><span>Stok menipis</span><span class="metric-icon metric-icon-coral" aria-hidden="true">⌁</span></div><strong class="metric-number" data-metric="low-stock">—</strong><span class="metric-note" data-metric-note="low-stock">perlu dicek hari ini</span></article>
+                    <article class="metric"><div class="metric-top"><span data-metric-label="low-stock">Stok menipis</span><span class="metric-icon metric-icon-coral" data-metric-icon="low-stock" aria-hidden="true">⌁</span></div><strong class="metric-number" data-metric="low-stock">—</strong><span class="metric-note" data-metric-note="low-stock">perlu dicek hari ini</span></article>
                     <article class="metric"><div class="metric-top"><span>Transaksi</span><span class="metric-icon metric-icon-blue" aria-hidden="true">↗</span></div><strong class="metric-number" data-metric="transactions">—</strong><span class="metric-note">riwayat akunmu</span></article>
                 </div>
                 <section class="content-section overview-lower" data-admin-stock-panel hidden>
@@ -63,8 +63,8 @@
             </section>
 
             <section class="page-panel" data-panel="transactions">
-                <div class="page-heading"><div><span class="eyebrow">AKTIVITAS</span><h1>Transaksi</h1><p>Riwayat transaksi yang tercatat di akunmu.</p></div></div>
-                <section class="content-section standalone-section"><div class="section-heading"><div><span class="eyebrow">RIWAYAT</span><h2>Aktivitas terbaru</h2></div></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Nomor</th><th>Tanggal</th><th>Total</th><th>Status</th></tr></thead><tbody data-transaction-rows><tr><td class="table-loading" colspan="4">Mengambil transaksi...</td></tr></tbody></table></div></section>
+                <div class="page-heading"><div><span class="eyebrow">AKTIVITAS</span><h1>Transaksi</h1><p data-transactions-description>Daftar transaksi seluruh pengguna.</p></div></div>
+                <section class="content-section standalone-section"><div class="section-heading"><div><span class="eyebrow">RIWAYAT</span><h2 data-transactions-heading>Semua transaksi</h2></div><div class="transaction-tools" data-admin-transaction-tools hidden><label class="search-field"><span aria-hidden="true">⌕</span><input type="search" placeholder="Cari nomor atau pemesan..." data-transaction-search aria-label="Cari transaksi"></label><select class="text-field transaction-filter-select" data-transaction-status-filter aria-label="Filter status transaksi"><option value="">Semua status</option><option value="pending">Menunggu</option><option value="diproses">Diproses</option><option value="selesai">Selesai</option><option value="dibatalkan">Dibatalkan</option></select><small class="transaction-result-count" data-transaction-result-count aria-live="polite"></small></div></div><div class="table-wrap"><table class="data-table"><thead><tr data-transaction-head><th>Nomor</th><th>Pemesan</th><th>Makanan</th><th>Tanggal</th><th>Total</th><th>Status pesanan</th><th>Pembayaran</th></tr></thead><tbody data-transaction-rows><tr><td class="table-loading" colspan="7">Mengambil transaksi...</td></tr></tbody></table></div><div class="transaction-pagination" data-transaction-pagination hidden><button class="table-action" type="button" data-transaction-previous disabled>‹ Sebelumnya</button><small data-transaction-page-label aria-live="polite"></small><button class="table-action" type="button" data-transaction-next disabled>Berikutnya ›</button></div></section>
             </section>
             <section class="page-panel" data-panel="login-activity">
                 <div class="page-heading"><div><span class="eyebrow">AKUN</span><h1>Aktivitas login</h1><p>Pengguna dan waktu terakhir mereka masuk ke web.</p></div></div>
@@ -91,11 +91,50 @@
             </dialog>
             <dialog class="app-dialog app-dialog-compact" data-purchase-dialog aria-labelledby="purchase-dialog-title">
                 <form class="dialog-form" data-purchase-form>
-                    <span class="eyebrow">PESANAN BARU</span><h2 id="purchase-dialog-title" data-purchase-name>Pilih makanan</h2>
-                    <p class="dialog-description" data-purchase-price></p>
+                    <span class="eyebrow" data-purchase-eyebrow>LANGKAH 1 DARI 2</span><h2 id="purchase-dialog-title" data-purchase-title>Pesanan</h2>
                     <input type="hidden" name="makanan_id" data-purchase-id>
-                    <label class="field-label" for="purchase-quantity">Jumlah pesanan</label><input class="text-field" id="purchase-quantity" name="qty" type="number" min="1" value="1" step="1" required>
-                    <div class="dialog-actions"><button class="button button-quiet" type="button" data-close-dialog>Batal</button><button class="button button-primary" type="submit"><span>Buat pesanan</span><span aria-hidden="true">↗</span></button></div>
+                    <section class="purchase-step" data-purchase-step="details">
+                        <p class="payment-item-name" data-purchase-name>Pilih makanan</p>
+                        <p class="dialog-description" data-purchase-price></p>
+                        <label class="field-label" for="purchase-quantity">Jumlah pesanan</label><input class="text-field" id="purchase-quantity" name="qty" type="number" min="1" value="1" step="1" required>
+                        <div class="dialog-actions"><button class="button button-quiet" type="button" data-close-dialog>Batal</button><button class="button button-primary" type="button" data-payment-next><span>Lanjut ke pembayaran</span><span aria-hidden="true">→</span></button></div>
+                    </section>
+                    <section class="purchase-step" data-purchase-step="payment" hidden>
+                        @php
+                            $paymentSettings = [
+                                 'banks' => config('payments.banks', []),
+                                'qrisPayload' => config('payments.qris_payload'),
+                                'qrisImageUrl' => config('payments.qris_image_url'),
+                            ];
+                        @endphp
+                        <script type="application/json" data-payment-settings>@json($paymentSettings)</script>
+                        <div class="payment-summary" aria-label="Ringkasan pembayaran">
+                            <div class="payment-summary-row"><span data-payment-item-name>Makanan</span><span data-payment-item-quantity>1 × Rp 0</span></div>
+                            <div class="payment-summary-row payment-summary-total"><strong>Total pembayaran</strong><strong data-payment-total>Rp 0</strong></div>
+                        </div>
+                        <fieldset class="payment-methods">
+                            <legend class="field-label">Pilih metode pembayaran</legend>
+                            <label class="payment-method-option"><input type="radio" name="payment_method" value="bank_transfer"><span class="payment-method-copy"><strong>Transfer bank</strong><small data-bank-method-hint>Rekening akan ditampilkan setelah metode dipilih</small></span><span class="payment-method-check" aria-hidden="true"></span></label>
+                            <label class="payment-method-option"><input type="radio" name="payment_method" value="qris"><span class="payment-method-copy"><strong>QRIS</strong><small data-qris-method-hint>Barcode QRIS merchant</small></span><span class="payment-method-check" aria-hidden="true"></span></label>
+                            <label class="payment-method-option"><input type="radio" name="payment_method" value="cash_on_pickup"><span class="payment-method-copy"><strong>Tunai saat ambil</strong><small>Bayar langsung ketika pesanan diambil</small></span><span class="payment-method-check" aria-hidden="true"></span></label>
+                        </fieldset>
+                        <section class="payment-provider-panel" data-bank-payment-panel hidden>
+                            <p class="payment-account-heading">Rekening tujuan transfer</p>
+                            <p class="payment-unavailable" data-bank-unavailable hidden>Rekening tujuan belum tersedia.</p>
+                            <dl class="payment-account-details" data-payment-account-details hidden>
+                                <div><dt>Bank</dt><dd data-payment-bank-name></dd></div>
+                                <div><dt>Nomor rekening</dt><dd data-payment-account-number></dd></div>
+                                <div><dt>Atas nama</dt><dd data-payment-account-name></dd></div>
+                            </dl>
+                        </section>
+                        <section class="payment-provider-panel qris-payment-panel" data-qris-payment-panel hidden>
+                            <img class="qris-code-image" data-qris-code alt="Barcode QRIS pembayaran" hidden referrerpolicy="no-referrer">
+                            <p class="payment-unavailable qris-unavailable" data-qris-unavailable hidden>QRIS belum dikonfigurasi pengelola.</p>
+                            <p class="qris-caption">Pindai menggunakan aplikasi pembayaran yang mendukung QRIS.</p>
+                        </section>
+                        <div class="payment-instructions"><span class="payment-instructions-mark" aria-hidden="true">i</span><p data-payment-instructions>Pesanan dicatat menunggu pembayaran. Minta nomor rekening kepada pengelola; pembayaran belum diverifikasi otomatis.</p></div>
+                        <div class="dialog-actions"><button class="button button-quiet" type="button" data-payment-back>Ubah pesanan</button><button class="button button-primary" type="submit" data-payment-confirm><span>Konfirmasi pesanan</span><span aria-hidden="true">↗</span></button></div>
+                    </section>
                 </form>
             </dialog>
             <dialog class="app-dialog app-dialog-compact" data-profile-dialog aria-labelledby="profile-dialog-title">
