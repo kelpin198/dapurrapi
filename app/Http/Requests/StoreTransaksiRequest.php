@@ -17,7 +17,8 @@ class StoreTransaksiRequest extends FormRequest
     {
         return [
             'items' => 'required|array|min:1',
-            'items.*.makanan_id' => 'required|exists:makanans,id',
+            'items.*.makanan_id' => 'nullable|exists:makanans,id',
+            'items.*.minuman_id' => 'nullable|exists:minumans,id',
             'items.*.qty' => 'required|integer|min:1',
             'payment_method' => 'sometimes|required|in:bank_transfer,qris,cash_on_pickup',
         ];
@@ -26,6 +27,15 @@ class StoreTransaksiRequest extends FormRequest
     public function after(): array
     {
         return [function (Validator $validator): void {
+            foreach ($this->input('items', []) as $index => $item) {
+                $hasFood = filled($item['makanan_id'] ?? null);
+                $hasDrink = filled($item['minuman_id'] ?? null);
+
+                if ($hasFood === $hasDrink) {
+                    $validator->errors()->add("items.{$index}.makanan_id", 'Pilih tepat satu produk: makanan atau minuman.');
+                }
+            }
+
             if ($this->input('payment_method') === 'qris'
                 && blank(config('payments.qris_payload'))
                 && blank(config('payments.qris_image_url'))) {

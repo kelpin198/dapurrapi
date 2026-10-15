@@ -18,7 +18,7 @@ class UpdateKategoriRequest extends FormRequest
         $id = $this->route('id');
 
         return [
-            'nama_kategori' => "required|string|max:100|unique:kategoris,nama_kategori,{$id}",
+            'nama_kategori' => "required|string|max:100|not_regex:/minuman/i|unique:kategoris,nama_kategori,{$id}",
         ];
     }
 

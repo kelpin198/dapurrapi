@@ -17,7 +17,7 @@ class StoreKategoriBatchRequest extends FormRequest
     {
         return [
             'items' => 'required|array|min:1|max:100',
-            'items.*.nama_kategori' => 'required|string|max:100|distinct',
+            'items.*.nama_kategori' => 'required|string|max:100|not_regex:/minuman/i|distinct',
         ];
     }
 

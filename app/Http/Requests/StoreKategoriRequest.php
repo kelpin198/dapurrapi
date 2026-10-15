@@ -16,7 +16,7 @@ class StoreKategoriRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'nama_kategori' => 'required|string|max:100|unique:kategoris,nama_kategori',
+            'nama_kategori' => 'required|string|max:100|not_regex:/minuman/i|unique:kategoris,nama_kategori',
         ];
     }
 

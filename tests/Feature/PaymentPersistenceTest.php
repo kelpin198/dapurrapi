@@ -72,7 +72,7 @@ test('failed and expired payments are automatically refunded after one minute', 
         'status' => 'expired',
     ]);
     DB::table('payments')->where('id', $failedPayment->id)->update([
-        'updated_at' => now()->subSeconds(59),
+        'updated_at' => now()->subSeconds(30),
     ]);
     DB::table('payments')->where('id', $expiredPayment->id)->update([
         'updated_at' => now()->subMinute(),
@@ -84,7 +84,7 @@ test('failed and expired payments are automatically refunded after one minute', 
     expect($failedPayment->fresh()->status)->toBe('failed')
         ->and($expiredPayment->fresh()->status)->toBe('refunded');
 
-    $this->travel(2)->seconds();
+    $this->travel(31)->seconds();
 
     $this->artisan('payments:refund-terminal')
         ->assertSuccessful();

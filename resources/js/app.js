@@ -2,8 +2,18 @@ import "./bootstrap";
 
 const authTokenKey = "dapurRapiToken";
 const authUserKey = "dapurRapiUser";
+const pendingApprovalStorageKey = "dapurRapiPendingApprovalIds";
+const foodImageSearchCache = new Map();
+const restaurantLogoMaxBytes = 1_500_000;
 let currentTransactionPage = 1;
+let latestKnownAdminTransactionId = 0;
+let adminOrderWatchInitialized = false;
+let adminOrderPollingTimer = null;
+let userApprovalPollingTimer = null;
+let userApprovalPollInProgress = false;
+let recentCarouselPage = 0;
 window.dapurRapiFoods = [];
+window.dapurRapiDrinks = [];
 window.dapurRapiCategories = [];
 window.dapurRapiToken = sessionStorage.getItem(authTokenKey);
 window.dapurRapiUserRole = "user";
@@ -22,6 +32,115 @@ function escapeHtml(value) {
     );
 }
 
+function updateRecentCarouselControls() {
+    const grid = document.querySelector("[data-recent-foods]");
+    const controls = document.querySelector("[data-recent-controls]");
+    const slider = document.querySelector("[data-recent-slider]");
+
+    if (!grid || !controls || !slider) return;
+
+    const foodCount = grid.querySelectorAll(".recent-card").length;
+    const pageCount = Math.ceil(foodCount / 4);
+    recentCarouselPage = Math.min(
+        recentCarouselPage,
+        Math.max(pageCount - 1, 0),
+    );
+    controls.hidden = pageCount === 0;
+    slider.max = String(Math.max(pageCount - 1, 0));
+    slider.value = String(recentCarouselPage);
+    slider.disabled = pageCount <= 1;
+    slider.style.setProperty(
+        "--recent-thumb-width",
+        `${Math.min(100, (4 / foodCount) * 100)}%`,
+    );
+}
+
+function moveRecentCarouselToPage(page) {
+    const grid = document.querySelector("[data-recent-foods]");
+    if (!grid) return;
+
+    const pageCount = Math.ceil(
+        grid.querySelectorAll(".recent-card").length / 4,
+    );
+    recentCarouselPage = Math.max(0, Math.min(page, pageCount - 1));
+
+    const pageStartCard =
+        grid.querySelectorAll(".recent-card")[recentCarouselPage * 4];
+    if (pageStartCard) {
+        grid.scrollTo({
+            left: pageStartCard.offsetLeft - grid.offsetLeft,
+            behavior: "smooth",
+        });
+    }
+
+    updateRecentCarouselControls();
+}
+
+function searchCommonsFoodImage(foodName) {
+    const normalizedName = foodName.trim().toLocaleLowerCase("id-ID");
+
+    if (!foodImageSearchCache.has(normalizedName)) {
+        const parameters = new URLSearchParams({
+            action: "query",
+            generator: "search",
+            gsrsearch: normalizedName,
+            gsrnamespace: "6",
+            gsrlimit: "1",
+            prop: "imageinfo",
+            iiprop: "url|extmetadata",
+            iiurlwidth: "520",
+            format: "json",
+            origin: "*",
+        });
+        const searchRequest = fetch(
+            `https://commons.wikimedia.org/w/api.php?${parameters}`,
+        )
+            .then((response) => (response.ok ? response.json() : null))
+            .then((payload) => {
+                const imageInfo = Object.values(payload?.query?.pages ?? {})[0]
+                    ?.imageinfo?.[0];
+
+                if (!imageInfo?.thumburl || !imageInfo.descriptionurl) {
+                    return null;
+                }
+
+                const imageUrl = new URL(imageInfo.thumburl);
+                const sourceUrl = new URL(imageInfo.descriptionurl);
+
+                if (
+                    imageUrl.protocol !== "https:" ||
+                    sourceUrl.protocol !== "https:" ||
+                    !imageUrl.hostname.endsWith("wikimedia.org") ||
+                    !sourceUrl.hostname.endsWith("wikimedia.org")
+                ) {
+                    return null;
+                }
+
+                const metadata = imageInfo.extmetadata ?? {};
+                const artistMarkup = metadata.Artist?.value ?? "";
+                const author = new DOMParser()
+                    .parseFromString(artistMarkup, "text/html")
+                    .body.textContent.trim();
+
+                return {
+                    url: imageUrl.href,
+                    credit: {
+                        author: author || "Wikimedia Commons contributor",
+                        license:
+                            metadata.LicenseShortName?.value ??
+                            "Wikimedia Commons",
+                        url: sourceUrl.href,
+                    },
+                };
+            })
+            .catch(() => null);
+
+        foodImageSearchCache.set(normalizedName, searchRequest);
+    }
+
+    return foodImageSearchCache.get(normalizedName);
+}
+
 function showAuthNotice(message, type = "error") {
     const notice = document.querySelector("[data-notice]");
 
@@ -29,13 +148,20 @@ function showAuthNotice(message, type = "error") {
 
     notice.textContent = message;
     notice.classList.toggle("is-success", type === "success");
+    notice.classList.toggle(
+        "is-order-confirmation",
+        type === "order-confirmation",
+    );
     notice.hidden = false;
 }
 
 async function requestApi(path, { token, ...options } = {}) {
+    const isFormData = options.body instanceof FormData;
     const headers = {
         Accept: "application/json",
-        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(options.body && !isFormData
+            ? { "Content-Type": "application/json" }
+            : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...options.headers,
     };
@@ -52,6 +178,58 @@ async function requestApi(path, { token, ...options } = {}) {
     }
 
     return payload;
+}
+
+async function optimizeRestaurantLogo(file) {
+    if (file.size <= restaurantLogoMaxBytes) return file;
+    if (typeof createImageBitmap !== "function") {
+        throw new Error(
+            "Browser tidak dapat memproses gambar. Coba unggah logo lebih kecil.",
+        );
+    }
+
+    const image = await createImageBitmap(file);
+    let scale = Math.min(1, 1200 / Math.max(image.width, image.height));
+
+    try {
+        for (let resizeAttempt = 0; resizeAttempt < 6; resizeAttempt++) {
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(image.width * scale));
+            canvas.height = Math.max(1, Math.round(image.height * scale));
+            const context = canvas.getContext("2d");
+
+            if (!context) break;
+            context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+            for (const quality of [0.9, 0.8, 0.7, 0.6, 0.5]) {
+                const blob = await new Promise((resolve) =>
+                    canvas.toBlob(resolve, "image/webp", quality),
+                );
+
+                if (blob && blob.size <= restaurantLogoMaxBytes) {
+                    const extension =
+                        blob.type === "image/webp"
+                            ? "webp"
+                            : blob.type === "image/png"
+                              ? "png"
+                              : "jpg";
+
+                    return new File([blob], `restaurant-logo.${extension}`, {
+                        type: blob.type,
+                        lastModified: file.lastModified,
+                    });
+                }
+            }
+
+            scale *= 0.8;
+        }
+    } finally {
+        image.close();
+    }
+
+    throw new Error(
+        "Logo tidak dapat diperkecil hingga ukuran yang diizinkan.",
+    );
 }
 
 function initializeAuthForms() {
@@ -138,6 +316,137 @@ function unwrapData(payload) {
 
 function collectionTotal(payload, items) {
     return Number(payload?.data?.meta?.total ?? items.length);
+}
+
+function getPendingApprovalIds() {
+    try {
+        const storedIds = JSON.parse(
+            sessionStorage.getItem(pendingApprovalStorageKey) ?? "[]",
+        );
+
+        return Array.isArray(storedIds)
+            ? storedIds.map(Number).filter(Number.isFinite)
+            : [];
+    } catch {
+        return [];
+    }
+}
+
+function savePendingApprovalIds(ids) {
+    sessionStorage.setItem(pendingApprovalStorageKey, JSON.stringify(ids));
+}
+
+function addPendingApprovalId(id) {
+    const pendingIds = new Set(getPendingApprovalIds());
+    pendingIds.add(Number(id));
+    savePendingApprovalIds([...pendingIds]);
+}
+
+function startUserApprovalPolling() {
+    if (userApprovalPollingTimer || !getPendingApprovalIds().length) return;
+
+    userApprovalPollingTimer = window.setInterval(
+        pollForUserOrderApprovals,
+        5000,
+    );
+    pollForUserOrderApprovals();
+}
+
+async function pollForUserOrderApprovals() {
+    if (userApprovalPollInProgress) return;
+
+    const pendingIds = getPendingApprovalIds();
+    if (!pendingIds.length) {
+        window.clearInterval(userApprovalPollingTimer);
+        userApprovalPollingTimer = null;
+
+        return;
+    }
+
+    userApprovalPollInProgress = true;
+
+    try {
+        const approvedTransactions = [];
+        const cancelledTransactions = [];
+
+        for (const transactionId of pendingIds) {
+            try {
+                const payload = await requestApi(
+                    `transaksis/${transactionId}`,
+                    {
+                        token: window.dapurRapiToken,
+                    },
+                );
+                const transaction = payload.data;
+
+                if (["diproses", "selesai"].includes(transaction.status)) {
+                    approvedTransactions.push(transaction);
+                } else if (transaction.status === "dibatalkan") {
+                    cancelledTransactions.push(transaction);
+                }
+            } catch (error) {
+                if (
+                    !/404|tidak ditemukan|menunggu persetujuan/i.test(
+                        error.message,
+                    )
+                ) {
+                    throw error;
+                }
+            }
+        }
+
+        const resolvedTransactions = [
+            ...approvedTransactions,
+            ...cancelledTransactions,
+        ];
+
+        if (resolvedTransactions.length) {
+            const approvedIds = new Set(
+                resolvedTransactions.map((transaction) =>
+                    Number(transaction.id),
+                ),
+            );
+            savePendingApprovalIds(
+                pendingIds.filter((id) => !approvedIds.has(id)),
+            );
+            currentTransactionPage = 1;
+
+            const transactionSearch = document.querySelector(
+                "[data-transaction-search]",
+            );
+            if (transactionSearch) transactionSearch.value = "";
+
+            await loadDashboardData(window.dapurRapiToken);
+            if (approvedTransactions.length) {
+                const approvedLabels = approvedTransactions
+                    .map(
+                        (transaction) =>
+                            `#${String(transaction.id).padStart(4, "0")}`,
+                    )
+                    .join(", ");
+                showDashboardNotice(
+                    `Pesanan ${approvedLabels} disetujui admin dan sekarang tersedia di Transaksi.`,
+                    "success",
+                );
+            }
+
+            if (cancelledTransactions.length) {
+                const cancelledLabels = cancelledTransactions
+                    .map(
+                        (transaction) =>
+                            `#${String(transaction.id).padStart(4, "0")}`,
+                    )
+                    .join(", ");
+                showDashboardNotice(
+                    `Pesanan ${cancelledLabels} dibatalkan oleh pengelola.`,
+                );
+            }
+        }
+    } catch {
+        // Retry on the next poll if the dashboard is temporarily offline.
+    } finally {
+        userApprovalPollInProgress = false;
+    }
 }
 
 function formatCurrency(amount) {
@@ -269,6 +578,7 @@ function initializeNavigation() {
 
             sessionStorage.removeItem(authTokenKey);
             sessionStorage.removeItem(authUserKey);
+            sessionStorage.removeItem(pendingApprovalStorageKey);
             window.location.assign("/login");
         });
 }
@@ -309,8 +619,37 @@ function renderFoodsTable(foods, total = foods.length) {
         .join("");
 }
 
+function renderMinumansTable(drinks, total = drinks.length) {
+    const body = document.querySelector("[data-drink-rows]");
+    if (!body) return;
+
+    const heading = document.querySelector("[data-drinks-heading]");
+    if (heading) heading.textContent = total.toLocaleString("id-ID");
+
+    if (drinks.length === 0) {
+        setTableMessage(
+            "[data-drink-rows]",
+            "Belum ada minuman yang cocok dengan pencarian ini.",
+            5,
+        );
+        return;
+    }
+
+    const isAdmin = window.dapurRapiUserRole === "admin";
+    body.innerHTML = drinks
+        .map((drink) => {
+            const actions = isAdmin
+                ? `<div class="row-actions"><button class="table-action" type="button" data-drink-edit="${Number(drink.id)}">Ubah</button><button class="table-action table-action-danger" type="button" data-drink-delete="${Number(drink.id)}">Hapus</button></div>`
+                : `<button class="table-action table-action-buy" type="button" data-drink-buy="${Number(drink.id)}" ${Number(drink.stok) < 1 ? "disabled" : ""}>${Number(drink.stok) < 1 ? "Habis" : "Beli"}</button>`;
+
+            return `<tr><td>${escapeHtml(drink.nama_minuman)}</td><td>${escapeHtml(drink.deskripsi || "—")}</td><td>${escapeHtml(formatCurrency(drink.harga))}</td><td>${escapeHtml(drink.stok)} unit</td><td>${actions}</td></tr>`;
+        })
+        .join("");
+}
+
 function renderOverview(
     foods,
+    drinks,
     categories,
     transactions,
     foodTotal,
@@ -321,15 +660,33 @@ function renderOverview(
         document.querySelector("[data-low-stock-alert]")?.dataset
             .lowStockThreshold ?? 10,
     );
-    const lowStockFoods = foods
-        .filter((food) => Number(food.stok) <= threshold)
-        .sort((first, second) => first.stok - second.stok);
+    const lowStockProducts = [
+        ...foods
+            .filter((food) => Number(food.stok) <= threshold)
+            .map((food) => ({
+                name: food.nama_makanan,
+                category:
+                    food.kategori?.nama ??
+                    food.nama_kategori ??
+                    "Belum dikategorikan",
+                price: food.harga,
+                stock: food.stok,
+            })),
+        ...drinks
+            .filter((drink) => Number(drink.stok) <= threshold)
+            .map((drink) => ({
+                name: drink.nama_minuman,
+                category: "Minuman",
+                price: drink.harga,
+                stock: drink.stok,
+            })),
+    ].sort((first, second) => Number(first.stock) - Number(second.stock));
     const isAdmin = window.dapurRapiUserRole === "admin";
     const metrics = {
         foods: foodTotal,
         categories: categories.length,
         "low-stock": isAdmin
-            ? lowStockFoods.length
+            ? lowStockProducts.length
             : Number(topSellingFood?.quantity_sold ?? 0),
         transactions: transactionTotal,
     };
@@ -344,34 +701,34 @@ function renderOverview(
         isAdmin ? "⌁" : "★";
     document.querySelector('[data-metric-note="low-stock"]').textContent =
         isAdmin
-            ? `dari ${foods.length} menu di halaman ini`
+            ? `makanan dan minuman yang perlu dicek`
             : (topSellingFood?.nama_makanan ?? "Belum ada pesanan");
 
     const lowStockAlert = document.querySelector("[data-low-stock-alert]");
-    lowStockAlert.hidden = !isAdmin || lowStockFoods.length === 0;
-    if (isAdmin && lowStockFoods.length > 0) {
+    lowStockAlert.hidden = !isAdmin || lowStockProducts.length === 0;
+    if (isAdmin && lowStockProducts.length > 0) {
         document.querySelector("[data-low-stock-alert-text]").textContent =
-            `${lowStockFoods.length} menu memiliki stok ${threshold} atau kurang.`;
+            `${lowStockProducts.length} makanan/minuman memiliki stok ${threshold} atau kurang.`;
     }
 
     const lowStockBody = document.querySelector("[data-low-stock-rows]");
     if (lowStockBody) {
-        if (lowStockFoods.length === 0) {
+        if (lowStockProducts.length === 0) {
             setTableMessage(
                 "[data-low-stock-rows]",
                 "Semua stok terlihat aman. Tidak ada yang perlu direstok.",
                 5,
             );
         } else {
-            lowStockBody.innerHTML = lowStockFoods
+            lowStockBody.innerHTML = lowStockProducts
                 .slice(0, 5)
                 .map(
-                    (food) => `
+                    (product) => `
 				<tr>
-					<td>${escapeHtml(food.nama_makanan)}</td>
-					<td>${escapeHtml(food.kategori?.nama ?? food.nama_kategori ?? "Belum dikategorikan")}</td>
-					<td>${escapeHtml(formatCurrency(food.harga))}</td>
-					<td>${escapeHtml(food.stok ?? 0)} unit</td>
+                    <td>${escapeHtml(product.name)}</td>
+                    <td>${escapeHtml(product.category)}</td>
+                    <td>${escapeHtml(formatCurrency(product.price))}</td>
+                    <td>${escapeHtml(product.stock ?? 0)} unit</td>
 					<td><span class="status-pill">Perlu restok</span></td>
 				</tr>
 			`,
@@ -380,27 +737,89 @@ function renderOverview(
         }
     }
 
-    const recentFoods = [...foods].slice(-4).reverse();
-    const foodImages = [
-        "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=520&q=78",
-        "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=520&q=78",
-        "https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=520&q=78",
-        "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=520&q=78",
-    ];
+    const recentFoods = [...foods].reverse();
+    const foodImages = {
+        "nasi pecel":
+            "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Nasi_Pecel_Khas_Blitar.jpg/960px-Nasi_Pecel_Khas_Blitar.jpg",
+        "nasi bakar":
+            "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6f/Nasi_Bakar_Ayam.JPG/960px-Nasi_Bakar_Ayam.JPG",
+        "sosis solo":
+            "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d2/Sosis_Solo.jpg/960px-Sosis_Solo.jpg",
+    };
+    const foodImageCredits = {
+        "nasi pecel": {
+            author: "Supardisahabu",
+            license: "CC BY-SA 4.0",
+            url: "https://commons.wikimedia.org/wiki/File:Nasi_Pecel_Khas_Blitar.jpg",
+        },
+        "nasi bakar": {
+            author: "Gunawan Kartapranata",
+            license: "CC BY-SA 3.0",
+            url: "https://commons.wikimedia.org/wiki/File:Nasi_Bakar_Ayam.JPG",
+        },
+        "sosis solo": {
+            author: "Aininapple",
+            license: "CC BY-SA 4.0",
+            url: "https://commons.wikimedia.org/wiki/File:Sosis_Solo.jpg",
+        },
+    };
     const recentContainer = document.querySelector("[data-recent-foods]");
     if (recentContainer) {
+        recentCarouselPage = 0;
+        recentContainer.scrollLeft = 0;
         recentContainer.innerHTML = recentFoods.length
             ? recentFoods
-                  .map(
-                      (food, index) => `
+                  .map((food) => {
+                      const foodName = food.nama_makanan
+                          .trim()
+                          .toLocaleLowerCase("id-ID");
+                      const foodImage =
+                          foodImages[foodName] ??
+                          "https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=520&h=260&q=78";
+                      const imageCredit = foodImageCredits[foodName];
+                      const imageCreditMarkup = imageCredit
+                          ? `<a class="recent-photo-credit" href="${imageCredit.url}" target="_blank" rel="noopener noreferrer" title="Foto oleh ${escapeHtml(imageCredit.author)}, ${imageCredit.license}" aria-label="Kredit foto oleh ${escapeHtml(imageCredit.author)}, ${imageCredit.license}">i</a>`
+                          : '<a class="recent-photo-credit" data-food-image-credit hidden target="_blank" rel="noopener noreferrer">i</a>';
+
+                      return `
 			<article class="recent-card">
-				<div class="recent-photo" role="img" aria-label="Foto ${escapeHtml(food.nama_makanan)}" style="background-image:url('${foodImages[index]}')"></div>
+                <div class="recent-photo-wrap"><div class="recent-photo" data-food-id="${escapeHtml(food.id)}" role="img" aria-label="Foto ${escapeHtml(food.nama_makanan)}" style="background-image:url('${foodImage}')"></div>${imageCreditMarkup}</div>
 				<div class="recent-copy"><strong>${escapeHtml(food.nama_makanan)}</strong><span>${escapeHtml(food.kategori?.nama ?? food.nama_kategori ?? "Menu dapur")}</span></div>
 			</article>
-		`,
-                  )
+		`;
+                  })
                   .join("")
             : '<div class="empty-inline">Belum ada menu. Daftar makananmu akan muncul di sini.</div>';
+        updateRecentCarouselControls();
+
+        recentFoods.forEach((food) => {
+            const foodName = food.nama_makanan
+                .trim()
+                .toLocaleLowerCase("id-ID");
+
+            if (foodImages[foodName]) return;
+
+            searchCommonsFoodImage(foodName).then((image) => {
+                if (!image) return;
+
+                const imageElement = recentContainer.querySelector(
+                    `[data-food-id="${Number(food.id)}"]`,
+                );
+                if (!imageElement) return;
+
+                const creditLink = imageElement.nextElementSibling;
+                if (!(creditLink instanceof HTMLAnchorElement)) return;
+
+                imageElement.style.backgroundImage = `url("${image.url}")`;
+                creditLink.href = image.credit.url;
+                creditLink.title = `Foto oleh ${image.credit.author}, ${image.credit.license}`;
+                creditLink.setAttribute(
+                    "aria-label",
+                    `Kredit foto oleh ${image.credit.author}, ${image.credit.license}`,
+                );
+                creditLink.hidden = false;
+            });
+        });
     }
 }
 
@@ -489,8 +908,11 @@ function renderTransactions(transactions, pagination = {}) {
         ["dibatalkan", "Dibatalkan"],
     ];
 
-    body.innerHTML = [...transactions]
-        .reverse()
+    const visibleTransactions = isAdmin
+        ? transactions
+        : [...transactions].reverse();
+
+    body.innerHTML = visibleTransactions
         .map((transaction) => {
             const status = String(transaction.status ?? "menunggu");
             const statusClass = ["selesai", "completed", "success"].includes(
@@ -517,6 +939,7 @@ function renderTransactions(transactions, pagination = {}) {
             };
             const paymentStatusOptions = Object.entries(paymentStatuses);
             const isRefunded = payment?.status === "refunded";
+            const isPinnedPaid = isAdmin && payment?.status === "paid";
             const isCompletedOrPaid =
                 status === "selesai" || payment?.status === "paid";
             const isLocked = isRefunded || isCompletedOrPaid;
@@ -528,14 +951,17 @@ function renderTransactions(transactions, pagination = {}) {
                       )
                       .join("")}</ul>`
                 : '<span class="transaction-food-empty">Rincian tidak tersedia</span>';
-            const statusDisplay = isAdmin
-                ? `<select class="text-field transaction-status" data-transaction-status="${Number(transaction.id)}" data-current-status="${escapeHtml(status)}" aria-label="Ubah status transaksi ${escapeHtml(String(transaction.id))}" ${isLocked ? `disabled title="${isRefunded ? "Transaksi sudah dikembalikan" : "Transaksi sudah selesai/lunas"}"` : ""}>${statusOptions
-                      .map(
-                          ([value, label]) =>
-                              `<option value="${value}" ${value === status ? "selected" : ""}>${label}</option>`,
-                      )
-                      .join("")}</select>`
-                : `<span class="status-pill ${statusClass}">${escapeHtml(statusLabel)}</span>`;
+            const statusDisplay =
+                isAdmin && status === "pending"
+                    ? `<button class="table-action transaction-approve-button" type="button" data-approve-transaction="${Number(transaction.id)}" aria-label="Setujui transaksi ${escapeHtml(String(transaction.id))}">Oke</button>`
+                    : isAdmin
+                      ? `<select class="text-field transaction-status" data-transaction-status="${Number(transaction.id)}" data-current-status="${escapeHtml(status)}" aria-label="Ubah status transaksi ${escapeHtml(String(transaction.id))}" ${isLocked ? `disabled title="${isRefunded ? "Transaksi sudah dikembalikan" : "Transaksi sudah selesai/lunas"}"` : ""}>${statusOptions
+                            .map(
+                                ([value, label]) =>
+                                    `<option value="${value}" ${value === status ? "selected" : ""}>${label}</option>`,
+                            )
+                            .join("")}</select>`
+                      : `<span class="status-pill ${statusClass}">${escapeHtml(statusLabel)}</span>`;
             const paymentDisplay = payment
                 ? `<span class="payment-method-label">${escapeHtml(paymentMethods[payment.payment_method] ?? payment.payment_method)}</span>${
                       isAdmin
@@ -551,7 +977,7 @@ function renderTransactions(transactions, pagination = {}) {
 
             return `
             <tr class="${isAdmin && isRefunded ? "transaction-row-refunded" : isAdmin && isCompletedOrPaid ? "transaction-row-completed" : ""}" ${isAdmin && isLocked ? 'aria-disabled="true"' : ""}>
-				<td>#${escapeHtml(String(transaction.id).padStart(4, "0"))}</td>
+				<td><span>#${escapeHtml(String(transaction.id).padStart(4, "0"))}</span>${isPinnedPaid ? '<span class="transaction-pinned-label" title="Pembayaran lunas disematkan di bagian atas">Disematkan</span>' : ""}</td>
                 ${isAdmin ? `<td>${escapeHtml(transaction.user?.name ?? "Pengguna")}</td>` : ""}
                 <td>${foodItems}</td>
 				<td>${escapeHtml(formatDate(transaction.created_at))}</td>
@@ -602,6 +1028,103 @@ async function loadTransactionPage(page) {
     } catch (error) {
         previousButton.disabled = currentTransactionPage <= 1;
         nextButton.disabled = false;
+        showDashboardNotice(error.message);
+    }
+}
+
+function updateAdminOrderNotificationVisibility() {
+    const notifications = document.querySelector(
+        "[data-admin-order-notifications]",
+    );
+    if (notifications) {
+        notifications.hidden = notifications.childElementCount === 0;
+    }
+}
+
+function showNewOrderNotification(transaction) {
+    const notifications = document.querySelector(
+        "[data-admin-order-notifications]",
+    );
+    if (!notifications) return;
+
+    const transactionId = Number(transaction.id);
+    if (
+        notifications.querySelector(
+            `[data-admin-order-notice="${transactionId}"]`,
+        )
+    ) {
+        return;
+    }
+
+    const foodSummary = (transaction.items ?? [])
+        .map((item) => `${item.nama_makanan ?? "Menu"} × ${item.qty}`)
+        .join(", ");
+    const notice = document.createElement("article");
+    notice.className = "admin-order-notice";
+    notice.dataset.adminOrderNotice = String(transactionId);
+    notice.innerHTML = `
+        <div class="admin-order-notice-heading">
+            <div class="admin-order-notice-copy">
+                <strong>Pesanan baru #${escapeHtml(String(transactionId).padStart(4, "0"))}</strong>
+                <span>${escapeHtml(transaction.user?.name ?? "Pengguna")} · ${escapeHtml(formatCurrency(transaction.total_harga))}</span>
+            </div>
+            <button class="admin-order-notice-dismiss" type="button" data-dismiss-order-notice aria-label="Tutup pemberitahuan">×</button>
+        </div>
+        <p class="admin-order-notice-items">${escapeHtml(foodSummary || "Rincian makanan tidak tersedia")}</p>
+        <div class="admin-order-notice-actions"><button class="table-action transaction-approve-button" type="button" data-approve-transaction="${transactionId}">Oke</button></div>
+    `;
+    notifications.append(notice);
+    notifications.hidden = false;
+}
+
+async function pollForNewAdminOrders() {
+    try {
+        const payload = await requestApi("transaksis?page=1", {
+            token: window.dapurRapiToken,
+        });
+        const transactions = unwrapData(payload);
+        const newTransactions = transactions
+            .filter(
+                (transaction) =>
+                    Number(transaction.id) > latestKnownAdminTransactionId,
+            )
+            .sort((first, second) => Number(first.id) - Number(second.id));
+
+        for (const transaction of newTransactions) {
+            if (transaction.status === "pending") {
+                showNewOrderNotification(transaction);
+            }
+
+            latestKnownAdminTransactionId = Math.max(
+                latestKnownAdminTransactionId,
+                Number(transaction.id),
+            );
+        }
+    } catch {
+        // Leave the dashboard available when a background check briefly fails.
+    }
+}
+
+async function approvePendingTransaction(transactionId, button) {
+    button.disabled = true;
+
+    try {
+        await requestApi(`transaksis/${transactionId}/status`, {
+            method: "PUT",
+            token: window.dapurRapiToken,
+            body: JSON.stringify({ status: "diproses" }),
+        });
+        document
+            .querySelector(`[data-admin-order-notice="${transactionId}"]`)
+            ?.remove();
+        updateAdminOrderNotificationVisibility();
+        showDashboardNotice(
+            "Pesanan disetujui dan sedang diproses.",
+            "success",
+        );
+        await loadDashboardData(window.dapurRapiToken);
+    } catch (error) {
+        button.disabled = false;
         showDashboardNotice(error.message);
     }
 }
@@ -693,18 +1216,87 @@ function renderProfile(profile) {
         .toLocaleUpperCase("id-ID");
 }
 
+function renderRestaurantProfile(profile) {
+    window.dapurRapiRestaurantProfile = profile;
+
+    document.querySelectorAll("[data-restaurant-name]").forEach((element) => {
+        element.textContent = profile.name;
+    });
+
+    document.querySelectorAll("[data-brand-logo]").forEach((image) => {
+        image.hidden = !profile.logo_url;
+        image.src = profile.logo_url ?? "";
+        image.previousElementSibling.hidden = Boolean(profile.logo_url);
+    });
+
+    const viewName = document.querySelector("[data-restaurant-view-name]");
+    const viewHistory = document.querySelector(
+        "[data-restaurant-view-history]",
+    );
+    const viewLogo = document.querySelector("[data-restaurant-view-logo]");
+    const viewLogoMark = document.querySelector("[data-profile-logo-mark]");
+    const editorLogo = document.querySelector("[data-restaurant-editor-logo]");
+    const editorLogoMark = document.querySelector("[data-editor-logo-mark]");
+
+    if (viewName) viewName.textContent = profile.name;
+    if (viewHistory) {
+        viewHistory.textContent =
+            profile.history?.trim() || "Sejarah restoran belum ditambahkan.";
+    }
+    if (viewLogo) {
+        viewLogo.hidden = !profile.logo_url;
+        viewLogo.src = profile.logo_url ?? "";
+        viewLogoMark.hidden = Boolean(profile.logo_url);
+    }
+    if (editorLogo) {
+        editorLogo.hidden = !profile.logo_url;
+        editorLogo.src = profile.logo_url ?? "";
+        editorLogoMark.hidden = Boolean(profile.logo_url);
+    }
+}
+
+function openRestaurantDialog() {
+    const dialog = document.querySelector("[data-restaurant-dialog]");
+    const viewer = document.querySelector("[data-restaurant-profile-view]");
+    const form = document.querySelector("[data-restaurant-form]");
+    const isAdmin = window.dapurRapiUserRole === "admin";
+
+    viewer.hidden = isAdmin;
+    form.hidden = !isAdmin;
+
+    if (isAdmin) {
+        form.reset();
+        document.querySelector("[data-restaurant-name-input]").value =
+            window.dapurRapiRestaurantProfile.name;
+        document.querySelector("[data-restaurant-history-input]").value =
+            window.dapurRapiRestaurantProfile.history ?? "";
+        renderRestaurantProfile(window.dapurRapiRestaurantProfile);
+    }
+
+    dialog.showModal();
+}
+
 async function loadDashboardData(token) {
-    const [profilePayload, foodPayload, categoryPayload, transactionPayload] =
-        await Promise.all([
-            requestApi("me", { token }),
-            requestApi("makanans", { token }),
-            requestApi("kategoris", { token }),
-            requestApi(transactionRequestPath(currentTransactionPage), {
-                token,
-            }),
-        ]);
+    const [
+        profilePayload,
+        foodPayload,
+        drinkPayload,
+        categoryPayload,
+        transactionPayload,
+        restaurantProfilePayload,
+    ] = await Promise.all([
+        requestApi("me", { token }),
+        requestApi("makanans", { token }),
+        requestApi("minumans", { token }),
+        requestApi("kategoris", { token }),
+        requestApi(transactionRequestPath(currentTransactionPage), {
+            token,
+        }),
+        requestApi("restaurant-profile", { token }),
+    ]);
     const profile = profilePayload.data;
     const foods = unwrapData(foodPayload);
+    const drinks = unwrapData(drinkPayload);
     const categories = unwrapData(categoryPayload);
     const transactions = unwrapData(transactionPayload);
     const foodTotal = collectionTotal(foodPayload, foods);
@@ -714,8 +1306,20 @@ async function loadDashboardData(token) {
     );
 
     window.dapurRapiFoods = foods;
+    window.dapurRapiDrinks = drinks;
     window.dapurRapiCategories = categories;
     window.dapurRapiUserRole = profile.role === "admin" ? "admin" : "user";
+    renderRestaurantProfile(restaurantProfilePayload.data);
+    if (window.dapurRapiUserRole === "admin" && !adminOrderWatchInitialized) {
+        latestKnownAdminTransactionId = Math.max(
+            0,
+            ...transactions.map((transaction) => Number(transaction.id)),
+        );
+        transactions
+            .filter((transaction) => transaction.status === "pending")
+            .forEach(showNewOrderNotification);
+        adminOrderWatchInitialized = true;
+    }
     renderProfile(profile);
     document.querySelector("[data-user-role-label]").textContent =
         window.dapurRapiUserRole === "admin" ? "Administrator" : "Pengguna";
@@ -729,10 +1333,14 @@ async function loadDashboardData(token) {
         window.dapurRapiUserRole !== "admin";
     document.querySelector("[data-create-food]").hidden =
         window.dapurRapiUserRole !== "admin";
+    document.querySelector("[data-create-drink]").hidden =
+        window.dapurRapiUserRole !== "admin";
     document.querySelector("[data-create-category]").hidden =
         window.dapurRapiUserRole !== "admin";
     document.querySelector('[data-count="foods"]').textContent =
         foodTotal.toLocaleString("id-ID");
+    document.querySelector('[data-count="drinks"]').textContent =
+        collectionTotal(drinkPayload, drinks).toLocaleString("id-ID");
     document.querySelector("[data-transactions-description]").textContent =
         window.dapurRapiUserRole === "admin"
             ? "Pesanan semua pengguna dan pengelolaan status transaksi."
@@ -744,13 +1352,15 @@ async function loadDashboardData(token) {
 
     renderOverview(
         foods,
+        drinks,
         categories,
         transactions,
-        foodTotal,
+        foodTotal + collectionTotal(drinkPayload, drinks),
         transactionTotal,
         transactionPayload.top_selling_food,
     );
     renderFoodsTable(foods, foodTotal);
+    renderMinumansTable(drinks, collectionTotal(drinkPayload, drinks));
     renderCategories(categories, foods);
     renderTransactions(transactions, transactionPayload.pagination);
 
@@ -790,7 +1400,7 @@ function openFoodDialog(food = null) {
         )
         .join("");
     form.reset();
-    document.querySelector("[data-food-id]").value = food?.id ?? "";
+    form.querySelector('[name="id"]').value = food?.id ?? "";
     document.querySelector("[data-food-dialog-title]").textContent = food
         ? "Ubah makanan"
         : "Tambah makanan";
@@ -817,6 +1427,21 @@ function openCategoryDialog(category = null) {
     document.querySelector("[data-category-dialog]").showModal();
 }
 
+function openDrinkDialog(drink = null) {
+    const form = document.querySelector("[data-drink-form]");
+    form.reset();
+    form.querySelector('[name="id"]').value = drink?.id ?? "";
+    document.querySelector("[data-drink-dialog-title]").textContent = drink
+        ? "Ubah minuman"
+        : "Tambah minuman";
+    form.querySelector('[name="nama_minuman"]').value =
+        drink?.nama_minuman ?? "";
+    form.querySelector('[name="harga"]').value = drink?.harga ?? "";
+    form.querySelector('[name="stok"]').value = drink?.stok ?? "";
+    form.querySelector('[name="deskripsi"]').value = drink?.deskripsi ?? "";
+    document.querySelector("[data-drink-dialog]").showModal();
+}
+
 function setPurchaseStep(step) {
     const isPaymentStep = step === "payment";
     document.querySelectorAll("[data-purchase-step]").forEach((section) => {
@@ -830,21 +1455,67 @@ function setPurchaseStep(step) {
 }
 
 function updatePaymentSummary() {
-    const foodId = Number(document.querySelector("[data-purchase-id]").value);
+    const product = getSelectedPurchaseProduct();
     const quantity = Number(document.querySelector('[name="qty"]').value);
-    const food = window.dapurRapiFoods.find(
-        (item) => Number(item.id) === foodId,
-    );
-    if (!food) return;
+    if (!product) return;
 
-    const total = Number(food.harga) * quantity;
+    const total = Number(product.harga) * quantity;
     document.querySelector("[data-payment-item-name]").textContent =
-        food.nama_makanan;
+        product.nama_makanan ?? product.nama_minuman;
     document.querySelector("[data-payment-item-quantity]").textContent =
-        `${quantity} × ${formatCurrency(food.harga)}`;
+        `${quantity} × ${formatCurrency(product.harga)}`;
     document.querySelector("[data-payment-total]").textContent =
         formatCurrency(total);
     updatePaymentInstructions();
+}
+
+function getSelectedPurchaseProduct() {
+    const drinkId = Number(
+        document.querySelector("[data-purchase-minuman-id]").value,
+    );
+
+    if (drinkId) {
+        return window.dapurRapiDrinks.find(
+            (drink) => Number(drink.id) === drinkId,
+        );
+    }
+
+    const foodId = Number(document.querySelector("[data-purchase-id]").value);
+
+    return window.dapurRapiFoods.find((food) => Number(food.id) === foodId);
+}
+
+function openPurchaseDialog(product, isDrink = false) {
+    document.querySelector("[data-purchase-id]").value = isDrink
+        ? ""
+        : product.id;
+    document.querySelector("[data-purchase-minuman-id]").value = isDrink
+        ? product.id
+        : "";
+    document.querySelector("[data-purchase-name]").textContent =
+        product.nama_makanan ?? product.nama_minuman;
+    document.querySelector("[data-purchase-price]").textContent =
+        `${formatCurrency(product.harga)} per porsi · stok ${product.stok} unit`;
+
+    const quantity = document.querySelector('[name="qty"]');
+    quantity.max = product.stok;
+    quantity.value = "1";
+
+    const paymentSettings = JSON.parse(
+        document.querySelector("[data-payment-settings]").textContent,
+    );
+    const defaultMethod = paymentSettings.banks.length
+        ? "bank_transfer"
+        : paymentSettings.qrisPayload
+          ? "qris"
+          : "cash_on_pickup";
+    document.querySelector(
+        `[name="payment_method"][value="${defaultMethod}"]`,
+    ).checked = true;
+    updatePaymentInstructions();
+    setPurchaseStep("details");
+    updatePaymentSummary();
+    document.querySelector("[data-purchase-dialog]").showModal();
 }
 
 function updatePaymentInstructions() {
@@ -932,9 +1603,168 @@ function initializePaymentMethods() {
 }
 
 function initializeDashboardActions() {
+    document.querySelectorAll("[data-restaurant-brand]").forEach((brand) => {
+        brand.addEventListener("click", (event) => {
+            event.preventDefault();
+            openRestaurantDialog();
+        });
+    });
+
+    const logoLightbox = document.querySelector("[data-logo-lightbox]");
+    const largeLogo = document.querySelector("[data-logo-lightbox-image]");
+    const openLogo = (image) => {
+        if (!image.src) return;
+
+        largeLogo.src = image.currentSrc || image.src;
+        largeLogo.alt = image.alt;
+        logoLightbox.showModal();
+    };
+
+    document.querySelectorAll("[data-logo-zoom]").forEach((image) => {
+        image.addEventListener("click", () => openLogo(image));
+        image.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openLogo(image);
+            }
+        });
+    });
+
+    document
+        .querySelector("[data-logo-lightbox-close]")
+        ?.addEventListener("click", () => logoLightbox.close());
+    logoLightbox?.addEventListener("click", (event) => {
+        if (event.target === logoLightbox) logoLightbox.close();
+    });
+
+    document
+        .querySelector("[data-restaurant-logo-input]")
+        ?.addEventListener("change", (event) => {
+            const file = event.currentTarget.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.addEventListener("load", () => {
+                const preview = document.querySelector(
+                    "[data-restaurant-editor-logo]",
+                );
+                preview.src = reader.result;
+                preview.hidden = false;
+                document.querySelector("[data-editor-logo-mark]").hidden = true;
+            });
+            reader.readAsDataURL(file);
+        });
+
+    document
+        .querySelector("[data-restaurant-form]")
+        ?.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const button = form.querySelector('button[type="submit"]');
+            const error = document.querySelector(
+                "[data-restaurant-form-error]",
+            );
+            const formData = new FormData(form);
+            formData.set("name", String(formData.get("name")).trim());
+            formData.set(
+                "history",
+                String(formData.get("history") ?? "").trim(),
+            );
+
+            error.hidden = true;
+            button.disabled = true;
+
+            try {
+                const selectedLogo = formData.get("logo");
+                if (
+                    selectedLogo instanceof File &&
+                    selectedLogo.size > restaurantLogoMaxBytes
+                ) {
+                    formData.set(
+                        "logo",
+                        await optimizeRestaurantLogo(selectedLogo),
+                    );
+                }
+
+                const payload = await requestApi("restaurant-profile", {
+                    method: "POST",
+                    token: window.dapurRapiToken,
+                    body: formData,
+                });
+                renderRestaurantProfile(payload.data);
+                document.querySelector("[data-restaurant-dialog]").close();
+                showDashboardNotice(payload.message, "success");
+            } catch (requestError) {
+                error.textContent = requestError.message;
+                error.hidden = false;
+            } finally {
+                button.disabled = false;
+            }
+        });
+
+    document.querySelector("[data-recent-foods]")?.addEventListener(
+        "scroll",
+        () => {
+            const grid = document.querySelector("[data-recent-foods]");
+            const pageCount = Math.ceil(
+                grid.querySelectorAll(".recent-card").length / 4,
+            );
+            const maxScroll = grid.scrollWidth - grid.clientWidth;
+
+            if (pageCount > 1 && maxScroll > 0) {
+                recentCarouselPage = Math.round(
+                    (grid.scrollLeft / maxScroll) * (pageCount - 1),
+                );
+            }
+
+            updateRecentCarouselControls();
+        },
+        { passive: true },
+    );
+    document
+        .querySelector("[data-recent-slider]")
+        ?.addEventListener("input", (event) => {
+            moveRecentCarouselToPage(Number(event.currentTarget.value));
+        });
+
     if (!document.querySelector("[data-dashboard]")) return;
 
     initializePaymentMethods();
+    document
+        .querySelector("[data-admin-order-notifications]")
+        ?.addEventListener("click", async (event) => {
+            const dismissButton = event.target.closest(
+                "[data-dismiss-order-notice]",
+            );
+            if (dismissButton) {
+                dismissButton.closest("[data-admin-order-notice]")?.remove();
+                updateAdminOrderNotificationVisibility();
+                return;
+            }
+
+            const approveButton = event.target.closest(
+                "[data-approve-transaction]",
+            );
+            if (approveButton) {
+                await approvePendingTransaction(
+                    Number(approveButton.dataset.approveTransaction),
+                    approveButton,
+                );
+            }
+        });
+    document
+        .querySelector("[data-transaction-rows]")
+        ?.addEventListener("click", async (event) => {
+            const approveButton = event.target.closest(
+                "[data-approve-transaction]",
+            );
+            if (approveButton) {
+                await approvePendingTransaction(
+                    Number(approveButton.dataset.approveTransaction),
+                    approveButton,
+                );
+            }
+        });
     let transactionSearchTimeout;
     document
         .querySelector("[data-transaction-search]")
@@ -1006,8 +1836,119 @@ function initializeDashboardActions() {
             openFoodDialog();
         });
     document
+        .querySelector("[data-create-drink]")
+        ?.addEventListener("click", () => openDrinkDialog());
+    document
         .querySelector("[data-create-category]")
         ?.addEventListener("click", () => openCategoryDialog());
+
+    let drinkSearchTimeout;
+    document
+        .querySelector("[data-drink-search]")
+        ?.addEventListener("input", (event) => {
+            const query = event.currentTarget.value.trim();
+            window.clearTimeout(drinkSearchTimeout);
+            drinkSearchTimeout = window.setTimeout(async () => {
+                try {
+                    const payload = await requestApi(
+                        `minumans?search=${encodeURIComponent(query)}`,
+                        { token: window.dapurRapiToken },
+                    );
+                    const drinks = unwrapData(payload);
+                    window.dapurRapiDrinks = drinks;
+                    renderMinumansTable(
+                        drinks,
+                        collectionTotal(payload, drinks),
+                    );
+                } catch (error) {
+                    showDashboardNotice(error.message);
+                }
+            }, 250);
+        });
+
+    document
+        .querySelector("[data-drink-form]")
+        ?.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const button = form.querySelector('button[type="submit"]');
+            const values = Object.fromEntries(new FormData(form));
+            const drinkId = values.id;
+            const payload = {
+                nama_minuman: values.nama_minuman,
+                harga: Number(values.harga),
+                stok: Number(values.stok),
+                deskripsi: values.deskripsi,
+            };
+
+            button.disabled = true;
+            try {
+                await requestApi(drinkId ? `minumans/${drinkId}` : "minumans", {
+                    method: drinkId ? "PUT" : "POST",
+                    token: window.dapurRapiToken,
+                    body: JSON.stringify(payload),
+                });
+                document.querySelector("[data-drink-dialog]").close();
+                showDashboardNotice(
+                    drinkId
+                        ? "Perubahan minuman tersimpan."
+                        : "Minuman berhasil ditambahkan ke tabel terpisah.",
+                    "success",
+                );
+                await loadDashboardData(window.dapurRapiToken);
+            } catch (error) {
+                showDashboardNotice(error.message);
+            } finally {
+                button.disabled = false;
+            }
+        });
+
+    document
+        .querySelector("[data-drink-rows]")
+        ?.addEventListener("click", async (event) => {
+            const button = event.target.closest("button");
+            if (!button) return;
+
+            const drinkId = Number(
+                button.dataset.drinkEdit ??
+                    button.dataset.drinkDelete ??
+                    button.dataset.drinkBuy,
+            );
+            const drink = window.dapurRapiDrinks.find(
+                (item) => Number(item.id) === drinkId,
+            );
+            if (!drink) return;
+
+            if (button.hasAttribute("data-drink-edit")) {
+                openDrinkDialog(drink);
+                return;
+            }
+
+            if (button.hasAttribute("data-drink-delete")) {
+                if (
+                    !window.confirm(
+                        `Hapus ${drink.nama_minuman} dari daftar minuman?`,
+                    )
+                )
+                    return;
+
+                try {
+                    await requestApi(`minumans/${drinkId}`, {
+                        method: "DELETE",
+                        token: window.dapurRapiToken,
+                    });
+                    showDashboardNotice("Minuman berhasil dihapus.", "success");
+                    await loadDashboardData(window.dapurRapiToken);
+                } catch (error) {
+                    showDashboardNotice(error.message);
+                }
+                return;
+            }
+
+            if (button.hasAttribute("data-drink-buy")) {
+                openPurchaseDialog(drink, true);
+            }
+        });
 
     document.querySelectorAll("[data-close-dialog]").forEach((button) => {
         button.addEventListener("click", () =>
@@ -1058,30 +1999,7 @@ function initializeDashboardActions() {
             }
 
             if (button.hasAttribute("data-food-buy")) {
-                document.querySelector("[data-purchase-id]").value = food.id;
-                document.querySelector("[data-purchase-name]").textContent =
-                    food.nama_makanan;
-                document.querySelector("[data-purchase-price]").textContent =
-                    `${formatCurrency(food.harga)} per porsi · stok ${food.stok} unit`;
-                const quantity = document.querySelector('[name="qty"]');
-                quantity.max = food.stok;
-                quantity.value = "1";
-                const paymentSettings = JSON.parse(
-                    document.querySelector("[data-payment-settings]")
-                        .textContent,
-                );
-                const defaultMethod = paymentSettings.banks.length
-                    ? "bank_transfer"
-                    : paymentSettings.qrisPayload
-                      ? "qris"
-                      : "cash_on_pickup";
-                document.querySelector(
-                    `[name="payment_method"][value="${defaultMethod}"]`,
-                ).checked = true;
-                updatePaymentInstructions();
-                setPurchaseStep("details");
-                updatePaymentSummary();
-                document.querySelector("[data-purchase-dialog]").showModal();
+                openPurchaseDialog(food);
             }
         });
 
@@ -1100,13 +2018,9 @@ function initializeDashboardActions() {
             const quantity = Number(
                 document.querySelector('[name="qty"]').value,
             );
-            const food = window.dapurRapiFoods.find(
-                (item) =>
-                    Number(item.id) ===
-                    Number(document.querySelector("[data-purchase-id]").value),
-            );
+            const product = getSelectedPurchaseProduct();
 
-            if (!food || quantity < 1 || quantity > Number(food.stok)) {
+            if (!product || quantity < 1 || quantity > Number(product.stok)) {
                 showDashboardNotice(
                     "Jumlah pesanan melebihi stok yang tersedia.",
                 );
@@ -1151,6 +2065,36 @@ function initializeDashboardActions() {
                 showDashboardNotice("Kategori berhasil dihapus.", "success");
                 await loadDashboardData(window.dapurRapiToken);
             } catch (error) {
+                showDashboardNotice(error.message);
+            }
+        });
+
+    document
+        .querySelector("[data-transaction-rows]")
+        ?.addEventListener("click", async (event) => {
+            const approveButton = event.target.closest(
+                "[data-transaction-approve]",
+            );
+            if (!approveButton) return;
+
+            const transactionId = Number(
+                approveButton.dataset.transactionApprove,
+            );
+            approveButton.disabled = true;
+
+            try {
+                await requestApi(`transaksis/${transactionId}/status`, {
+                    method: "PUT",
+                    token: window.dapurRapiToken,
+                    body: JSON.stringify({ status: "diproses" }),
+                });
+                showDashboardNotice(
+                    "Pesanan disetujui dan sedang diproses.",
+                    "success",
+                );
+                await loadDashboardData(window.dapurRapiToken);
+            } catch (error) {
+                approveButton.disabled = false;
                 showDashboardNotice(error.message);
             }
         });
@@ -1305,14 +2249,15 @@ function initializeDashboardActions() {
             const foodId = Number(
                 document.querySelector("[data-purchase-id]").value,
             );
+            const drinkId = Number(
+                document.querySelector("[data-purchase-minuman-id]").value,
+            );
             const quantity = Number(
                 document.querySelector('[name="qty"]').value,
             );
-            const food = window.dapurRapiFoods.find(
-                (item) => Number(item.id) === foodId,
-            );
+            const product = getSelectedPurchaseProduct();
 
-            if (!food || quantity < 1 || quantity > Number(food.stok)) {
+            if (!product || quantity < 1 || quantity > Number(product.stok)) {
                 showDashboardNotice(
                     "Jumlah pesanan melebihi stok yang tersedia.",
                 );
@@ -1328,20 +2273,29 @@ function initializeDashboardActions() {
             ) {
                 button.disabled = true;
                 try {
-                    await requestApi("transaksis", {
+                    const purchasePayload = await requestApi("transaksis", {
                         method: "POST",
                         token: window.dapurRapiToken,
                         body: JSON.stringify({
-                            items: [{ makanan_id: foodId, qty: quantity }],
+                            items: [
+                                {
+                                    ...(drinkId
+                                        ? { minuman_id: drinkId }
+                                        : { makanan_id: foodId }),
+                                    qty: quantity,
+                                },
+                            ],
                             payment_method: paymentMethod,
                         }),
                     });
+                    addPendingApprovalId(purchasePayload.data.id);
                     document.querySelector("[data-purchase-dialog]").close();
                     showDashboardNotice(
-                        "Pesanan tercatat. Silakan konfirmasi pembayaran dengan pengelola.",
-                        "success",
+                        "Pesanan berhasil dikirim. Menunggu persetujuan admin sebelum muncul di transaksi.",
+                        "order-confirmation",
                     );
                     await loadDashboardData(window.dapurRapiToken);
+                    startUserApprovalPolling();
                 } catch (error) {
                     showDashboardNotice(error.message);
                 } finally {
@@ -1375,6 +2329,14 @@ async function initializeDashboard() {
 
     try {
         await loadDashboardData(token);
+        if (window.dapurRapiUserRole === "admin" && !adminOrderPollingTimer) {
+            adminOrderPollingTimer = window.setInterval(
+                pollForNewAdminOrders,
+                8000,
+            );
+        } else if (window.dapurRapiUserRole !== "admin") {
+            startUserApprovalPolling();
+        }
     } catch (error) {
         if (/unauthorized|unauthenticated/i.test(error.message)) {
             sessionStorage.removeItem(authTokenKey);

@@ -95,6 +95,13 @@ class TransaksisController extends Controller
                 ], 403);
             }
 
+            if (! $request->user()->isAdmin() && $transaksi->status === 'pending') {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Pesanan menunggu persetujuan pengelola.',
+                ], 404);
+            }
+
             return response()->json([
                 'status' => true,
                 'data' => new TransaksiResource($transaksi),

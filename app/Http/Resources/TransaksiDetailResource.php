@@ -12,7 +12,9 @@ class TransaksiDetailResource extends JsonResource
         return [
             'id' => $this->id,
             'makanan_id' => $this->makanan_id,
-            'nama_makanan' => $this->whenLoaded('makanan', fn () => $this->makanan->nama_makanan),
+            'minuman_id' => $this->minuman_id,
+            'nama_makanan' => $this->nama_produk ?? $this->makanan?->nama_makanan ?? $this->minuman?->nama_minuman,
+            'jenis_produk' => $this->minuman_id ? 'minuman' : 'makanan',
             'qty' => $this->qty,
             'harga_satuan' => (float) $this->harga_satuan,
             'subtotal' => (float) $this->subtotal,

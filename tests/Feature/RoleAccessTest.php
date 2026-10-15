@@ -39,6 +39,14 @@ test('regular users cannot change the catalog but admins can', function () {
     ])->assertCreated();
     $foodId = $foodResponse->json('data.id');
 
+    $this->actingAs($user, 'sanctum')
+        ->getJson('/api/makanans')
+        ->assertOk();
+    $this->getJson("/api/makanans/{$foodId}")->assertOk();
+    $this->putJson("/api/makanans/{$foodId}", [])->assertForbidden();
+    $this->deleteJson("/api/makanans/{$foodId}")->assertForbidden();
+    $this->actingAs($admin, 'sanctum');
+
     $this->postJson('/api/makanans', [
         'nama_makanan' => 'Menu Spesial Dapur',
         'kategori_id' => $categoryId,
@@ -63,6 +71,36 @@ test('regular users cannot change the catalog but admins can', function () {
     $this->actingAs($user, 'sanctum')
         ->getJson('/api/makanans/trashed')
         ->assertForbidden();
+});
+
+test('users can read categories while only admins can complete category CRUD', function () {
+    $category = Kategoris::create(['nama_kategori' => 'Makanan Ringan']);
+    $user = User::factory()->create(['role' => 'user']);
+
+    $this->actingAs($user, 'sanctum')
+        ->getJson('/api/kategoris')
+        ->assertOk();
+    $this->getJson("/api/kategoris/{$category->id}")
+        ->assertOk()
+        ->assertJsonPath('data.id', $category->id);
+    $this->putJson("/api/kategoris/{$category->id}", [
+        'nama_kategori' => 'Camilan',
+    ])->assertForbidden();
+    $this->deleteJson("/api/kategoris/{$category->id}")->assertForbidden();
+
+    $admin = User::factory()->create(['role' => 'admin']);
+
+    $this->actingAs($admin, 'sanctum')
+        ->putJson("/api/kategoris/{$category->id}", [
+            'nama_kategori' => 'Camilan',
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.nama_kategori', 'Camilan');
+    $this->getJson("/api/kategoris/{$category->id}")
+        ->assertOk()
+        ->assertJsonPath('data.nama_kategori', 'Camilan');
+    $this->deleteJson("/api/kategoris/{$category->id}")->assertOk();
+    $this->getJson("/api/kategoris/{$category->id}")->assertNotFound();
 });
 
 test('users only see their own transactions while admins can manage all transaction statuses', function () {
@@ -102,9 +140,10 @@ test('users only see their own transactions while admins can manage all transact
 
     $this->getJson('/api/transaksis')
         ->assertOk()
-        ->assertJsonCount(1, 'data')
-        ->assertJsonPath('data.0.id', $anotherPurchase->json('data.id'))
-        ->assertJsonPath('data.0.user', null);
+        ->assertJsonCount(0, 'data')
+        ->assertJsonPath('active_transactions_count', 0);
+    $this->getJson("/api/transaksis/{$anotherPurchase->json('data.id')}")
+        ->assertNotFound();
 
     $admin = User::factory()->create();
     $admin->forceFill(['role' => 'admin'])->save();
@@ -122,6 +161,23 @@ test('users only see their own transactions while admins can manage all transact
         ->assertJsonPath('data.status', 'diproses')
         ->assertJsonPath('data.payments.0.status', 'processing');
 
+    $this->actingAs($anotherUser, 'sanctum')
+        ->getJson('/api/transaksis')
+        ->assertOk()
+        ->assertJsonCount(0, 'data');
+
+    $this->actingAs($admin, 'sanctum')
+        ->putJson("/api/transaksis/{$anotherPurchase->json('data.id')}/status", ['status' => 'diproses'])
+        ->assertOk();
+
+    $this->actingAs($anotherUser, 'sanctum')
+        ->getJson('/api/transaksis')
+        ->assertOk()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.id', $anotherPurchase->json('data.id'))
+        ->assertJsonPath('data.0.status', 'diproses');
+
+    $this->actingAs($admin, 'sanctum');
     $this->putJson("/api/transaksis/{$transactionId}/status", ['status' => 'pending'])
         ->assertOk()
         ->assertJsonPath('data.status', 'pending')
@@ -164,7 +220,7 @@ test('active transaction totals exclude cancelled orders for admins and users', 
         'total_harga' => 25000,
         'status' => 'pending',
     ]);
-    Transaksis::create([
+    $secondTransaction = Transaksis::create([
         'user_id' => $secondUser->id,
         'total_harga' => 30000,
         'status' => 'pending',
@@ -190,7 +246,17 @@ test('active transaction totals exclude cancelled orders for admins and users', 
     $this->actingAs($secondUser, 'sanctum')
         ->getJson('/api/transaksis')
         ->assertOk()
-        ->assertJsonPath('active_transactions_count', 1);
+        ->assertJsonPath('active_transactions_count', 0);
+
+    $this->actingAs($admin, 'sanctum')
+        ->putJson("/api/transaksis/{$secondTransaction->id}/status", ['status' => 'diproses'])
+        ->assertOk();
+
+    $this->actingAs($secondUser, 'sanctum')
+        ->getJson('/api/transaksis')
+        ->assertOk()
+        ->assertJsonPath('active_transactions_count', 1)
+        ->assertJsonPath('data.0.status', 'diproses');
 });
 
 test('user dashboard reports globally most sold food excluding cancelled orders', function () {
@@ -263,7 +329,7 @@ test('user dashboard reports globally most sold food excluding cancelled orders'
         ->assertOk()
         ->assertJsonPath('top_selling_food.food_id', $otherFood->id)
         ->assertJsonPath('top_selling_food.nama_makanan', 'Soto Ayam')
-        ->assertJsonPath('top_selling_food.quantity_sold', 6);
+        ->assertJsonPath('top_selling_food.quantity_sold', 4);
 });
 
 test('transaction history exposes older records on the next page', function () {
@@ -321,17 +387,84 @@ test('transaction list includes purchased food names and quantities', function (
 
     $this->getJson('/api/transaksis')
         ->assertOk()
+        ->assertJsonCount(0, 'data');
+
+    $admin = User::factory()->create();
+    $admin->forceFill(['role' => 'admin'])->save();
+    $this->actingAs($admin, 'sanctum')
+        ->putJson("/api/transaksis/{$transactionId}/status", ['status' => 'diproses'])
+        ->assertOk();
+
+    $this->actingAs($user, 'sanctum')
+        ->getJson('/api/transaksis')
+        ->assertOk()
         ->assertJsonPath('data.0.id', $transactionId)
         ->assertJsonPath('data.0.items.0.nama_makanan', 'Nasi Goreng')
         ->assertJsonPath('data.0.items.0.qty', 2);
 
-    $admin = User::factory()->create();
-    $admin->forceFill(['role' => 'admin'])->save();
     $this->actingAs($admin, 'sanctum')
         ->getJson('/api/transaksis')
         ->assertOk()
         ->assertJsonPath('data.0.items.0.nama_makanan', 'Nasi Goreng')
         ->assertJsonPath('data.0.items.0.qty', 2);
+});
+
+test('admin approval moves a waiting order and payment to processing for the user', function () {
+    config([
+        'payments.banks' => [[
+            'code' => 'bca',
+            'name' => 'BCA',
+            'account_number' => '1234567890',
+            'account_name' => 'Dapur Rapi',
+        ]],
+        'payments.qris_payload' => '000201010212-MERCHANT-QRIS-TEST',
+    ]);
+
+    $user = User::factory()->create();
+    $admin = User::factory()->create();
+    $admin->forceFill(['role' => 'admin'])->save();
+    $category = Kategoris::create(['nama_kategori' => 'Menu']);
+    $food = Makanans::create([
+        'nama_makanan' => 'Nasi Goreng',
+        'kategori_id' => $category->id,
+        'harga' => 20000,
+        'stok' => 5,
+    ]);
+
+    foreach (['qris', 'bank_transfer', 'cash_on_pickup'] as $paymentMethod) {
+        $purchase = $this->actingAs($user, 'sanctum')
+            ->postJson('/api/transaksis', [
+                'items' => [['makanan_id' => $food->id, 'qty' => 1]],
+                'payment_method' => $paymentMethod,
+            ])
+            ->assertCreated();
+        $transactionId = $purchase->json('data.id');
+
+        $this->getJson('/api/transaksis')
+            ->assertOk()
+            ->assertJsonMissing(['id' => $transactionId]);
+
+        $this->actingAs($admin, 'sanctum')
+            ->getJson('/api/transaksis')
+            ->assertOk()
+            ->assertJsonFragment([
+                'id' => $transactionId,
+                'status' => 'pending',
+            ]);
+
+        $this->putJson("/api/transaksis/{$transactionId}/status", ['status' => 'diproses'])
+            ->assertOk()
+            ->assertJsonPath('data.status', 'diproses')
+            ->assertJsonPath('data.payments.0.status', 'processing');
+
+        $this->actingAs($user, 'sanctum')
+            ->getJson('/api/transaksis')
+            ->assertOk()
+            ->assertJsonFragment([
+                'id' => $transactionId,
+                'status' => 'diproses',
+            ]);
+    }
 });
 
 test('users see failed and expired payments but refunded latest payments are hidden', function () {
@@ -396,10 +529,10 @@ test('users see failed and expired payments but refunded latest payments are hid
     $this->actingAs($user, 'sanctum')
         ->getJson('/api/transaksis')
         ->assertOk()
-        ->assertJsonCount(3, 'data')
+        ->assertJsonCount(2, 'data')
         ->assertJsonFragment(['id' => $failedTransaction->id])
         ->assertJsonFragment(['id' => $expiredTransaction->id])
-        ->assertJsonFragment(['id' => $retryTransaction->id])
+        ->assertJsonMissing(['id' => $retryTransaction->id])
         ->assertJsonMissing(['id' => $refundedTransaction->id]);
 
     $this->actingAs($admin, 'sanctum')

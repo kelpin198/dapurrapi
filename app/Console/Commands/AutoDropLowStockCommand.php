@@ -3,23 +3,25 @@
 namespace App\Console\Commands;
 
 use App\Models\Makanans;
+use App\Models\Minuman;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
 class AutoDropLowStockCommand extends Command
 {
-    protected $signature = 'makanan:auto-drop-low-stock {--batas=8 : Ambang batas stok data di bawah akan di hapus}';
+    protected $signature = 'makanan:auto-drop-low-stock {--batas= : Ambang stok untuk penghapusan otomatis}';
 
-    protected $description = 'Hapus otomatis data makanan yang stoknya 0 atau di bawah batas tertentu(default 20)';
+    protected $description = 'Soft delete makanan dan minuman dengan stok pada atau di bawah ambang otomatis';
 
-    public function handle()
+    public function handle(): int
     {
-        $batas = (int) $this->option('batas');
+        $batas = (int) ($this->option('batas') ?? config('inventory.auto_drop_threshold', 8));
 
-        $this->info("Mengecek makanan dengan stok <= {$batas} untuk dihapus otomatis...");
+        $this->info("Mengecek makanan dan minuman dengan stok <= {$batas} untuk dihapus otomatis...");
         $lowStockMakanans = Makanans::where('stok', '<=', $batas)->get();
+        $lowStockMinumans = Minuman::where('stok', '<=', $batas)->get();
 
-        if ($lowStockMakanans->isEmpty()) {
+        if ($lowStockMakanans->isEmpty() && $lowStockMinumans->isEmpty()) {
             $this->info('Tidak ada data makanan dengan stok rendah.');
             Log::info('Cron auto-drop-low-stock: Tidak ada data yang di hapus.');
 
@@ -44,7 +46,23 @@ class AutoDropLowStockCommand extends Command
             $total++;
         }
 
-        $this->info("Selesai. Total {$total} makanan di hapus otomatis karena stok <= {$batas}.");
+        foreach ($lowStockMinumans as $minuman) {
+            $pesan = "Auto-Drop: {$minuman->nama_minuman} (stok terakhir: {$minuman->stok}) dihapus otomatis.";
+
+            Log::warning($pesan, [
+                'id' => $minuman->id,
+                'nama_minuman' => $minuman->nama_minuman,
+                'stok' => $minuman->stok,
+                'deleted_at' => now(),
+            ]);
+
+            $this->warn($pesan);
+
+            $minuman->delete();
+            $total++;
+        }
+
+        $this->info("Selesai. Total {$total} makanan/minuman dihapus otomatis karena stok <= {$batas}.");
         Log::info('Cron auto-drop-low-stock selesai.', ['total_dihapus' => $total, 'batas' => $batas]);
 
         return self::SUCCESS;

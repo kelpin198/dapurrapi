@@ -8,7 +8,7 @@ class TransaksisDetails extends Model
 {
     protected $table = 'transaksi_details';
 
-    protected $fillable = ['transaksi_id', 'makanan_id', 'qty', 'harga_satuan', 'subtotal'];
+    protected $fillable = ['transaksi_id', 'makanan_id', 'minuman_id', 'nama_produk', 'qty', 'harga_satuan', 'subtotal'];
 
     public function transaksi()
     {
@@ -18,5 +18,10 @@ class TransaksisDetails extends Model
     public function makanan()
     {
         return $this->belongsTo(Makanans::class, 'makanan_id');
+    }
+
+    public function minuman()
+    {
+        return $this->belongsTo(Minuman::class, 'minuman_id');
     }
 }

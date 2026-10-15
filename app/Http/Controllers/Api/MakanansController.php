@@ -37,7 +37,16 @@ class MakanansController extends Controller
     public function store(StoreMakananRequest $request)
     {
         try {
-            $makanan = $this->service->store($request->validated());
+            $data = $request->validated();
+
+            if (! $this->service->isValidMakanan($data['nama_makanan'], $data['kategori_id'])) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Data minuman harus ditambahkan melalui endpoint minumans dan makanan harus memakai kategori makanan.',
+                ], 422);
+            }
+
+            $makanan = $this->service->store($data);
 
             if (! $makanan) {
                 return response()->json([
@@ -82,7 +91,16 @@ class MakanansController extends Controller
     public function update(UpdateMakananRequest $request, $id)
     {
         try {
-            $makanan = $this->service->updateData($id, $request->validated());
+            $data = $request->validated();
+
+            if (! $this->service->isValidMakanan($data['nama_makanan'], $data['kategori_id'])) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'Data minuman harus dikelola melalui endpoint minumans dan makanan harus memakai kategori makanan.',
+                ], 422);
+            }
+
+            $makanan = $this->service->updateData($id, $data);
 
             if (! $makanan) {
                 return response()->json([

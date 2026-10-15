@@ -13,7 +13,7 @@ class MakanansService
 
     protected KategorisRepositoryInterface $kategoriRepository;
 
-    private array $keywordMinuman = ['air', 'jus', 'teh', 'kopi', 'soda', 'minuman', 'milkshake', 'es'];
+    private array $keywordMinuman = ['air', 'jus', 'teh', 'kopi', 'soda', 'minuman', 'milkshake'];
 
     private array $keywordMakananBerat = ['nasi', 'mie', 'mi ', 'ayam', 'ikan', 'daging', 'soto', 'bakso', 'sop', 'sup', 'rendang', 'gulai', 'seblak', 'burger', 'pizza', 'pasta', 'kwetiau', 'capcay', 'pempek', 'rawon', 'opor', 'ketoprak'];
 
@@ -69,7 +69,7 @@ class MakanansService
     {
         $kategori = $this->kategoriRepository->find($kategoriId);
 
-        if (! $kategori) {
+        if (! $kategori || ! $this->isKategoriMakanan($kategoriId) || $this->isLikelyMinuman($namaMakanan)) {
             return false;
         }
 
@@ -84,6 +84,11 @@ class MakanansService
         $kategori = $this->kategoriRepository->find($kategoriId);
 
         return $kategori && str_contains(strtolower($kategori->nama_kategori), 'makanan');
+    }
+
+    public function isValidMakanan(string $namaMakanan, $kategoriId): bool
+    {
+        return ! $this->isLikelyMinuman($namaMakanan) && $this->isKategoriMakanan($kategoriId);
     }
 
     private function isLikelyMakananBerat(string $nama): bool
@@ -113,7 +118,7 @@ class MakanansService
         $nama = strtolower(trim($nama));
 
         if ($this->isLikelyMinuman($nama)) {
-            return 'minuman_dingin';
+            return null;
         }
 
         if ($this->isLikelyMakananBerat($nama)) {
@@ -134,7 +139,6 @@ class MakanansService
         return match (true) {
             $namaKategori === 'makanan berat' => 'makanan_berat',
             $namaKategori === 'makanan ringan' => 'makanan_ringan',
-            str_contains($namaKategori, 'minuman') => 'minuman_dingin',
             default => null,
         };
     }
@@ -149,6 +153,10 @@ class MakanansService
         }
 
         $input = $resolved['data'];
+
+        if (! $this->isValidMakanan($input['nama_makanan'], $input['kategori_id'])) {
+            return null;
+        }
 
         $makanan = $this->repository->create($input);
 
@@ -167,7 +175,7 @@ class MakanansService
 
         $resolved = $this->resolveKategoriId($input);
 
-        if ($resolved['error']) {
+        if ($resolved['error'] || ! $this->isValidMakanan($resolved['data']['nama_makanan'], $resolved['data']['kategori_id'])) {
             return null;
         }
 

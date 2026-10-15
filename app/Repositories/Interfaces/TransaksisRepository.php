@@ -3,6 +3,8 @@
 namespace App\Repositories\Interfaces;
 
 use App\Models\Makanans;
+use App\Models\Minuman;
+use App\Models\Payment;
 use App\Models\Transaksis;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -18,8 +20,9 @@ class TransaksisRepository implements TransaksisRepositoryInterface
 
     public function allByUser($userId, string $search = '')
     {
-        $query = $this->model->with(['details.makanan', 'payments'])
+        $query = $this->model->with(['details.makanan', 'details.minuman', 'payments'])
             ->where('user_id', $userId)
+            ->where('status', '!=', 'pending')
             ->whereDoesntHave('latestPayment', fn ($paymentQuery) => $paymentQuery->where('status', 'refunded'));
 
         $this->applySearch($query, $search, false);
@@ -32,11 +35,18 @@ class TransaksisRepository implements TransaksisRepositoryInterface
 
     public function all(string $search = '')
     {
-        $query = $this->model->with(['details.makanan', 'user', 'payments']);
+        $query = $this->model->with(['details.makanan', 'details.minuman', 'user', 'payments']);
 
         $this->applySearch($query, $search, true);
 
+        $transactionsTable = $this->model->getTable();
+        $paymentsTable = (new Payment)->getTable();
+
         return $query
+            ->orderByRaw(
+                "CASE WHEN (SELECT status FROM {$paymentsTable} WHERE {$paymentsTable}.transaksi_id = {$transactionsTable}.id ORDER BY {$paymentsTable}.id DESC LIMIT 1) = ? THEN 0 ELSE 1 END",
+                ['paid'],
+            )
             ->latest()
             ->orderByDesc('id')
             ->paginate(10);
@@ -66,7 +76,8 @@ class TransaksisRepository implements TransaksisRepositoryInterface
         $query = $this->model->newQuery()->where('status', '!=', 'dibatalkan');
 
         if ($userId !== null) {
-            $query->where('user_id', $userId);
+            $query->where('user_id', $userId)
+                ->whereNotIn('status', ['pending', 'dibatalkan']);
         }
 
         return $query->count();
@@ -77,7 +88,7 @@ class TransaksisRepository implements TransaksisRepositoryInterface
         return DB::table('transaksi_details as details')
             ->join('transaksis as transactions', 'transactions.id', '=', 'details.transaksi_id')
             ->join('makanans as foods', 'foods.id', '=', 'details.makanan_id')
-            ->where('transactions.status', '!=', 'dibatalkan')
+            ->whereNotIn('transactions.status', ['pending', 'dibatalkan'])
             ->select('foods.id as food_id', 'foods.nama_makanan')
             ->selectRaw('SUM(details.qty) as quantity_sold')
             ->groupBy('foods.id', 'foods.nama_makanan')
@@ -88,7 +99,7 @@ class TransaksisRepository implements TransaksisRepositoryInterface
 
     public function find($id)
     {
-        return $this->model->with(['details.makanan', 'user', 'payments'])->find($id);
+        return $this->model->with(['details.makanan', 'details.minuman', 'user', 'payments'])->find($id);
     }
 
     public function create(array $data)
@@ -98,30 +109,38 @@ class TransaksisRepository implements TransaksisRepositoryInterface
             $detailData = [];
 
             foreach ($data['items'] as $item) {
-                // Kunci baris ini supaya tidak ada request lain yang baca stok
-                // yang sama secara bersamaan (mencegah race condition)
-                $makanan = Makanans::lockForUpdate()->find($item['makanan_id']);
+                $isDrink = isset($item['minuman_id']);
+                $product = $isDrink
+                    ? Minuman::lockForUpdate()->find($item['minuman_id'])
+                    : Makanans::lockForUpdate()->find($item['makanan_id']);
+                $productName = $isDrink
+                    ? $product?->nama_minuman
+                    : $product?->nama_makanan;
 
-                if (! $makanan) {
-                    throw new \Exception("Makanan dengan ID {$item['makanan_id']} tidak ditemukan");
+                if (! $product) {
+                    $productType = $isDrink ? 'Minuman' : 'Makanan';
+                    $productId = $item[$isDrink ? 'minuman_id' : 'makanan_id'];
+
+                    throw new \Exception("{$productType} dengan ID {$productId} tidak ditemukan");
                 }
 
-                if ($makanan->stok < $item['qty']) {
-                    throw new \Exception("Stok {$makanan->nama_makanan} tidak cukup (sisa {$makanan->stok}, diminta {$item['qty']})");
+                if ($product->stok < $item['qty']) {
+                    throw new \Exception("Stok {$productName} tidak cukup (sisa {$product->stok}, diminta {$item['qty']})");
                 }
 
-                $subtotal = $makanan->harga * $item['qty'];
+                $subtotal = $product->harga * $item['qty'];
                 $totalHarga += $subtotal;
 
                 $detailData[] = [
-                    'makanan_id' => $makanan->id,
+                    'makanan_id' => $isDrink ? null : $product->id,
+                    'minuman_id' => $isDrink ? $product->id : null,
+                    'nama_produk' => $productName,
                     'qty' => $item['qty'],
-                    'harga_satuan' => $makanan->harga,
+                    'harga_satuan' => $product->harga,
                     'subtotal' => $subtotal,
                 ];
 
-                // 👇 INI BAGIAN YANG MENGURANGI STOK
-                $makanan->decrement('stok', $item['qty']);
+                $product->decrement('stok', $item['qty']);
             }
 
             $transaksi = $this->model->create([
@@ -161,7 +180,7 @@ class TransaksisRepository implements TransaksisRepositoryInterface
                 'metadata' => $paymentMetadata,
             ]);
 
-            return $transaksi->load(['details.makanan', 'payments']);
+            return $transaksi->load(['details.makanan', 'details.minuman', 'payments']);
         });
 
         Cache::flush();
