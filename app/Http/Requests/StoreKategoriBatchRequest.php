@@ -5,6 +5,7 @@ namespace App\Http\Requests;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Validation\Rule;
 
 class StoreKategoriBatchRequest extends FormRequest
 {
@@ -17,7 +18,13 @@ class StoreKategoriBatchRequest extends FormRequest
     {
         return [
             'items' => 'required|array|min:1|max:100',
-            'items.*.nama_kategori' => 'required|string|max:100|not_regex:/minuman/i|distinct',
+            'items.*.nama_kategori' => [
+                'required',
+                'string',
+                'max:100',
+                'distinct',
+                Rule::unique('kategoris', 'nama_kategori'),
+            ],
         ];
     }
 

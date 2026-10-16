@@ -55,7 +55,7 @@ class KategoriService
         }
 
         if ($this->repository->hasRelatedMakanan($id)) {
-            return ['success' => false, 'status' => 'conflict', 'message' => 'Kategori masih digunakan oleh data makanan, tidak bisa dihapus'];
+            return ['success' => false, 'status' => 'conflict', 'message' => 'Kategori masih digunakan oleh data katalog, tidak bisa dihapus'];
         }
 
         $this->repository->delete($id);

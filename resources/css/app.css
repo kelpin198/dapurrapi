@@ -614,7 +614,7 @@ a {
 }
 .overview-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 12px;
 }
 .metric {
@@ -630,6 +630,22 @@ a {
     color: #fff;
     border-color: #2d6b4e;
     background: var(--green);
+}
+.metric-drinks {
+    color: #fff;
+    border-color: #285a78;
+    background: #356f91;
+}
+.metric-drinks .metric-top,
+.metric-drinks .metric-note {
+    color: rgb(255 255 255 / 78%);
+}
+.metric-drinks .metric-number {
+    color: #fff;
+}
+.metric-drinks .metric-icon-blue {
+    color: #fff;
+    background: rgb(255 255 255 / 16%);
 }
 .metric-top {
     display: flex;

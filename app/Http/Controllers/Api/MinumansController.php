@@ -13,7 +13,7 @@ class MinumansController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Minuman::query()->orderBy('nama_minuman');
+        $query = Minuman::query()->with('kategori:id,nama_kategori')->orderBy('nama_minuman');
 
         if ($search = trim((string) $request->query('search', ''))) {
             $query->where('nama_minuman', 'like', "%{$search}%");
@@ -27,6 +27,8 @@ class MinumansController extends Controller
 
     public function show(Minuman $minuman)
     {
+        $minuman->load('kategori:id,nama_kategori');
+
         return response()->json([
             'status' => true,
             'data' => $minuman,
@@ -36,6 +38,7 @@ class MinumansController extends Controller
     public function store(StoreMinumanRequest $request)
     {
         $minuman = Minuman::create($request->validated());
+        $minuman->load('kategori:id,nama_kategori');
         Cache::flush();
 
         return response()->json([
@@ -53,7 +56,7 @@ class MinumansController extends Controller
         return response()->json([
             'status' => true,
             'message' => 'Minuman berhasil diperbarui.',
-            'data' => $minuman->refresh(),
+            'data' => $minuman->refresh()->load('kategori:id,nama_kategori'),
         ]);
     }
 

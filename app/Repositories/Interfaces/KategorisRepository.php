@@ -78,7 +78,9 @@ class KategorisRepository implements KategorisRepositoryInterface
     {
         $kategori = $this->find($id);
 
-        return $kategori ? $kategori->makanans()->count() > 0 : false;
+        return $kategori
+            ? $kategori->makanans()->withTrashed()->exists() || $kategori->minumans()->withTrashed()->exists()
+            : false;
     }
 
     public function createBatch(array $items): int

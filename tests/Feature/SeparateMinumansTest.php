@@ -12,16 +12,20 @@ uses(RefreshDatabase::class);
 test('admins manage drinks in the separate minumans table and customers can order them', function () {
     $admin = User::factory()->create(['role' => 'admin']);
     $customer = User::factory()->create(['role' => 'user']);
+    $coldCategory = Kategoris::query()->where('nama_kategori', 'Minuman Dingin')->firstOrFail();
+    $warmCategory = Kategoris::query()->where('nama_kategori', 'Minuman Hangat')->firstOrFail();
 
     $drinkResponse = $this->actingAs($admin, 'sanctum')
         ->postJson('/api/minumans', [
             'nama_minuman' => 'Es Teh Lemon',
+            'kategori_id' => $coldCategory->id,
             'harga' => 7000,
             'stok' => 10,
             'deskripsi' => 'Teh lemon dingin',
         ])
         ->assertCreated()
-        ->assertJsonPath('data.nama_minuman', 'Es Teh Lemon');
+        ->assertJsonPath('data.nama_minuman', 'Es Teh Lemon')
+        ->assertJsonPath('data.kategori.nama_kategori', 'Minuman Dingin');
 
     $drinkId = $drinkResponse->json('data.id');
     expect(Minuman::findOrFail($drinkId)->stok)->toBe(10);
@@ -32,22 +36,26 @@ test('admins manage drinks in the separate minumans table and customers can orde
 
     $this->putJson("/api/minumans/{$drinkId}", [
         'nama_minuman' => 'Es Teh Lemon',
+        'kategori_id' => $warmCategory->id,
         'harga' => 7500,
         'stok' => 10,
         'deskripsi' => 'Teh lemon segar',
     ])->assertOk()
         ->assertJsonPath('data.harga', 7500)
-        ->assertJsonPath('data.deskripsi', 'Teh lemon segar');
+        ->assertJsonPath('data.deskripsi', 'Teh lemon segar')
+        ->assertJsonPath('data.kategori.nama_kategori', 'Minuman Hangat');
 
     $this->actingAs($customer, 'sanctum')
         ->getJson('/api/minumans')
         ->assertOk()
-        ->assertJsonPath('data.data.0.nama_minuman', 'Es Teh Lemon');
+        ->assertJsonPath('data.data.0.nama_minuman', 'Es Teh Lemon')
+        ->assertJsonPath('data.data.0.kategori.nama_kategori', 'Minuman Hangat');
     $this->getJson("/api/minumans/{$drinkId}")
         ->assertOk()
         ->assertJsonPath('data.id', $drinkId);
     $this->putJson("/api/minumans/{$drinkId}", [
         'nama_minuman' => 'Es Teh Lemon',
+        'kategori_id' => $coldCategory->id,
         'harga' => 9000,
         'stok' => 10,
     ])->assertForbidden();
@@ -83,6 +91,7 @@ test('users cannot create drinks and an order line must identify exactly one pro
     $this->actingAs($user, 'sanctum')
         ->postJson('/api/minumans', [
             'nama_minuman' => 'Jus Jambu',
+            'kategori_id' => 0,
             'harga' => 8000,
             'stok' => 4,
         ])
@@ -96,7 +105,7 @@ test('users cannot create drinks and an order line must identify exactly one pro
 test('food endpoints reject drinks and drink categories while drinks stay in their own catalog', function () {
     $admin = User::factory()->create(['role' => 'admin']);
     $foodCategory = Kategoris::create(['nama_kategori' => 'Makanan Berat']);
-    $drinkCategory = Kategoris::create(['nama_kategori' => 'Minuman']);
+    $drinkCategory = Kategoris::query()->where('nama_kategori', 'Minuman Hangat')->firstOrFail();
     $this->actingAs($admin, 'sanctum');
 
     $this->postJson('/api/makanans', [
@@ -134,8 +143,12 @@ test('food endpoints reject drinks and drink categories while drinks stay in the
         'stok' => 5,
     ])->assertUnprocessable();
 
-    $this->postJson('/api/kategoris', ['nama_kategori' => 'Minuman Dingin'])
-        ->assertUnprocessable();
+    expect(Kategoris::query()
+        ->whereIn('nama_kategori', ['Minuman Dingin', 'Minuman Hangat'])
+        ->count())->toBe(2);
+    $this->putJson("/api/kategoris/{$drinkCategory->id}", [
+        'nama_kategori' => 'Kategori Makanan',
+    ])->assertUnprocessable();
     $this->putJson("/api/kategoris/{$foodCategory->id}", [
         'nama_kategori' => 'Minuman Dingin',
     ])->assertUnprocessable();
@@ -145,9 +158,11 @@ test('food endpoints reject drinks and drink categories while drinks stay in the
 
     $this->postJson('/api/minumans', [
         'nama_minuman' => 'Es Teh Manis',
+        'kategori_id' => $drinkCategory->id,
         'harga' => 5000,
         'stok' => 10,
     ])->assertCreated();
+    $this->deleteJson("/api/kategoris/{$drinkCategory->id}")->assertStatus(409);
 
     expect(Makanans::query()->count())->toBe(1)
         ->and(Minuman::query()->count())->toBe(1);

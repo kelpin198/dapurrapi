@@ -630,7 +630,7 @@ function renderMinumansTable(drinks, total = drinks.length) {
         setTableMessage(
             "[data-drink-rows]",
             "Belum ada minuman yang cocok dengan pencarian ini.",
-            5,
+            6,
         );
         return;
     }
@@ -642,7 +642,7 @@ function renderMinumansTable(drinks, total = drinks.length) {
                 ? `<div class="row-actions"><button class="table-action" type="button" data-drink-edit="${Number(drink.id)}">Ubah</button><button class="table-action table-action-danger" type="button" data-drink-delete="${Number(drink.id)}">Hapus</button></div>`
                 : `<button class="table-action table-action-buy" type="button" data-drink-buy="${Number(drink.id)}" ${Number(drink.stok) < 1 ? "disabled" : ""}>${Number(drink.stok) < 1 ? "Habis" : "Beli"}</button>`;
 
-            return `<tr><td>${escapeHtml(drink.nama_minuman)}</td><td>${escapeHtml(drink.deskripsi || "—")}</td><td>${escapeHtml(formatCurrency(drink.harga))}</td><td>${escapeHtml(drink.stok)} unit</td><td>${actions}</td></tr>`;
+            return `<tr><td>${escapeHtml(drink.nama_minuman)}</td><td>${escapeHtml(drink.kategori?.nama_kategori ?? "Belum dikategorikan")}</td><td>${escapeHtml(drink.deskripsi || "—")}</td><td>${escapeHtml(formatCurrency(drink.harga))}</td><td>${escapeHtml(drink.stok)} unit</td><td>${actions}</td></tr>`;
         })
         .join("");
 }
@@ -653,6 +653,7 @@ function renderOverview(
     categories,
     transactions,
     foodTotal,
+    drinkTotal,
     transactionTotal,
     topSellingFood,
 ) {
@@ -684,6 +685,7 @@ function renderOverview(
     const isAdmin = window.dapurRapiUserRole === "admin";
     const metrics = {
         foods: foodTotal,
+        drinks: drinkTotal,
         categories: categories.length,
         "low-stock": isAdmin
             ? lowStockProducts.length
@@ -737,7 +739,20 @@ function renderOverview(
         }
     }
 
-    const recentFoods = [...foods].reverse();
+    const recentProducts = [
+        ...foods.map((food) => ({
+            id: food.id,
+            name: food.nama_makanan,
+            kind: "makanan",
+            category: food.kategori?.nama ?? food.nama_kategori ?? "Menu dapur",
+        })),
+        ...drinks.map((drink) => ({
+            id: drink.id,
+            name: drink.nama_minuman,
+            kind: "minuman",
+            category: drink.kategori?.nama_kategori ?? "Minuman",
+        })),
+    ].reverse();
     const foodImages = {
         "nasi pecel":
             "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Nasi_Pecel_Khas_Blitar.jpg/960px-Nasi_Pecel_Khas_Blitar.jpg",
@@ -767,15 +782,17 @@ function renderOverview(
     if (recentContainer) {
         recentCarouselPage = 0;
         recentContainer.scrollLeft = 0;
-        recentContainer.innerHTML = recentFoods.length
-            ? recentFoods
-                  .map((food) => {
-                      const foodName = food.nama_makanan
+        recentContainer.innerHTML = recentProducts.length
+            ? recentProducts
+                  .map((product) => {
+                      const foodName = product.name
                           .trim()
                           .toLocaleLowerCase("id-ID");
                       const foodImage =
                           foodImages[foodName] ??
-                          "https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=520&h=260&q=78";
+                          (product.kind === "minuman"
+                              ? "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=520&h=260&q=78"
+                              : "https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=520&h=260&q=78");
                       const imageCredit = foodImageCredits[foodName];
                       const imageCreditMarkup = imageCredit
                           ? `<a class="recent-photo-credit" href="${imageCredit.url}" target="_blank" rel="noopener noreferrer" title="Foto oleh ${escapeHtml(imageCredit.author)}, ${imageCredit.license}" aria-label="Kredit foto oleh ${escapeHtml(imageCredit.author)}, ${imageCredit.license}">i</a>`
@@ -783,19 +800,17 @@ function renderOverview(
 
                       return `
 			<article class="recent-card">
-                <div class="recent-photo-wrap"><div class="recent-photo" data-food-id="${escapeHtml(food.id)}" role="img" aria-label="Foto ${escapeHtml(food.nama_makanan)}" style="background-image:url('${foodImage}')"></div>${imageCreditMarkup}</div>
-				<div class="recent-copy"><strong>${escapeHtml(food.nama_makanan)}</strong><span>${escapeHtml(food.kategori?.nama ?? food.nama_kategori ?? "Menu dapur")}</span></div>
+                <div class="recent-photo-wrap"><div class="recent-photo" data-product-id="${escapeHtml(product.id)}" data-product-kind="${product.kind}" role="img" aria-label="Foto ${escapeHtml(product.name)}" style="background-image:url('${foodImage}')"></div>${imageCreditMarkup}</div>
+                <div class="recent-copy"><strong>${escapeHtml(product.name)}</strong><span>${product.kind === "minuman" ? escapeHtml(product.category) : `Makanan · ${escapeHtml(product.category)}`}</span></div>
 			</article>
 		`;
                   })
                   .join("")
-            : '<div class="empty-inline">Belum ada menu. Daftar makananmu akan muncul di sini.</div>';
+            : '<div class="empty-inline">Belum ada makanan atau minuman yang terdaftar.</div>';
         updateRecentCarouselControls();
 
-        recentFoods.forEach((food) => {
-            const foodName = food.nama_makanan
-                .trim()
-                .toLocaleLowerCase("id-ID");
+        recentProducts.forEach((product) => {
+            const foodName = product.name.trim().toLocaleLowerCase("id-ID");
 
             if (foodImages[foodName]) return;
 
@@ -803,7 +818,7 @@ function renderOverview(
                 if (!image) return;
 
                 const imageElement = recentContainer.querySelector(
-                    `[data-food-id="${Number(food.id)}"]`,
+                    `[data-product-id="${Number(product.id)}"][data-product-kind="${product.kind}"]`,
                 );
                 if (!imageElement) return;
 
@@ -823,7 +838,7 @@ function renderOverview(
     }
 }
 
-function renderCategories(categories, foods) {
+function renderCategories(categories, foods, drinks) {
     const grid = document.querySelector("[data-category-grid]");
     if (!grid) return;
 
@@ -836,12 +851,19 @@ function renderCategories(categories, foods) {
     const isAdmin = window.dapurRapiUserRole === "admin";
     grid.innerHTML = categories
         .map((category) => {
-            const count = foods.filter(
+            const foodCount = foods.filter(
                 (food) =>
-                    food.kategori?.id === category.id ||
+                    Number(food.kategori?.id ?? food.kategori_id) ===
+                        Number(category.id) ||
                     food.nama_kategori === category.nama_kategori ||
                     food.kategori?.nama === category.nama_kategori,
             ).length;
+            const drinkCount = drinks.filter(
+                (drink) =>
+                    Number(drink.kategori?.id ?? drink.kategori_id) ===
+                    Number(category.id),
+            ).length;
+            const count = foodCount + drinkCount;
             const initials = category.nama_kategori
                 .trim()
                 .slice(0, 1)
@@ -1356,12 +1378,13 @@ async function loadDashboardData(token) {
         categories,
         transactions,
         foodTotal + collectionTotal(drinkPayload, drinks),
+        collectionTotal(drinkPayload, drinks),
         transactionTotal,
         transactionPayload.top_selling_food,
     );
     renderFoodsTable(foods, foodTotal);
     renderMinumansTable(drinks, collectionTotal(drinkPayload, drinks));
-    renderCategories(categories, foods);
+    renderCategories(categories, foods, drinks);
     renderTransactions(transactions, transactionPayload.pagination);
 
     if (window.dapurRapiUserRole === "admin") {
@@ -1429,13 +1452,31 @@ function openCategoryDialog(category = null) {
 
 function openDrinkDialog(drink = null) {
     const form = document.querySelector("[data-drink-form]");
+    const categoryField = form.querySelector("[data-drink-category]");
+    const drinkCategories = window.dapurRapiCategories.filter((category) =>
+        category.nama_kategori
+            .toLocaleLowerCase("id-ID")
+            .startsWith("minuman "),
+    );
+
     form.reset();
+    categoryField.innerHTML = drinkCategories
+        .map(
+            (category) =>
+                `<option value="${Number(category.id)}">${escapeHtml(category.nama_kategori)}</option>`,
+        )
+        .join("");
     form.querySelector('[name="id"]').value = drink?.id ?? "";
     document.querySelector("[data-drink-dialog-title]").textContent = drink
         ? "Ubah minuman"
         : "Tambah minuman";
     form.querySelector('[name="nama_minuman"]').value =
         drink?.nama_minuman ?? "";
+    categoryField.value =
+        drink?.kategori?.id ??
+        drink?.kategori_id ??
+        drinkCategories[0]?.id ??
+        "";
     form.querySelector('[name="harga"]').value = drink?.harga ?? "";
     form.querySelector('[name="stok"]').value = drink?.stok ?? "";
     form.querySelector('[name="deskripsi"]').value = drink?.deskripsi ?? "";
@@ -1876,6 +1917,7 @@ function initializeDashboardActions() {
             const drinkId = values.id;
             const payload = {
                 nama_minuman: values.nama_minuman,
+                kategori_id: Number(values.kategori_id),
                 harga: Number(values.harga),
                 stok: Number(values.stok),
                 deskripsi: values.deskripsi,

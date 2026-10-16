@@ -34,6 +34,12 @@ class UpdateMinumanRequest extends FormRequest
                         : $this->route('minuman'),
                 ),
             ],
+            'kategori_id' => [
+                'required',
+                Rule::exists('kategoris', 'id')->where(
+                    fn ($query) => $query->where('nama_kategori', 'like', 'Minuman %'),
+                ),
+            ],
             'harga' => ['required', 'numeric', 'min:0'],
             'stok' => ['required', 'integer', 'min:0'],
             'deskripsi' => ['nullable', 'string'],
