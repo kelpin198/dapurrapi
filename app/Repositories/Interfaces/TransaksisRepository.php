@@ -33,19 +33,26 @@ class TransaksisRepository implements TransaksisRepositoryInterface
             ->paginate(10);
     }
 
-    public function all(string $search = '')
+    public function all(string $search = '', ?string $status = null, ?string $paymentStatus = null)
     {
         $query = $this->model->with(['details.makanan', 'details.minuman', 'user', 'payments']);
 
         $this->applySearch($query, $search, true);
+
+        if ($status !== null) {
+            $query->where('status', $status);
+        }
+
+        if ($paymentStatus !== null) {
+            $query->whereHas('latestPayment', fn ($paymentQuery) => $paymentQuery->where('status', $paymentStatus));
+        }
 
         $transactionsTable = $this->model->getTable();
         $paymentsTable = (new Payment)->getTable();
 
         return $query
             ->orderByRaw(
-                "CASE WHEN (SELECT status FROM {$paymentsTable} WHERE {$paymentsTable}.transaksi_id = {$transactionsTable}.id ORDER BY {$paymentsTable}.id DESC LIMIT 1) = ? THEN 0 ELSE 1 END",
-                ['paid'],
+                "CASE WHEN {$transactionsTable}.status IN ('pending', 'diproses') AND NOT EXISTS (SELECT 1 FROM {$paymentsTable} AS latest_admin_payments WHERE latest_admin_payments.transaksi_id = {$transactionsTable}.id AND latest_admin_payments.id = (SELECT MAX(latest_payment_ids.id) FROM {$paymentsTable} AS latest_payment_ids WHERE latest_payment_ids.transaksi_id = {$transactionsTable}.id) AND latest_admin_payments.status IN ('paid', 'refunded')) THEN 0 ELSE 1 END",
             )
             ->latest()
             ->orderByDesc('id')

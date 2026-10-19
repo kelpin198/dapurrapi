@@ -19,6 +19,8 @@ test('authenticated users can view the restaurant profile', function () {
 
     $this->app['auth']->forgetGuards();
     $this->getJson('/api/restaurant-profile')->assertUnauthorized();
+
+    $this->get('/restaurant-logo')->assertNotFound();
 });
 
 test('only admins can update the restaurant name, history, and logo', function () {
@@ -35,11 +37,11 @@ test('only admins can update the restaurant name, history, and logo', function (
     ];
 
     $this->actingAs($user, 'sanctum')
-        ->postJson('/api/restaurant-profile', $input)
+        ->postJson('/api/admin/restaurant-profile', $input)
         ->assertForbidden();
 
     $this->actingAs($admin, 'sanctum')
-        ->post('/api/restaurant-profile', $input, ['Accept' => 'application/json'])
+        ->post('/api/admin/restaurant-profile', $input, ['Accept' => 'application/json'])
         ->assertOk()
         ->assertJsonPath('data.name', 'Warung Rasa')
         ->assertJsonPath('data.history', $input['history'])
@@ -50,13 +52,21 @@ test('only admins can update the restaurant name, history, and logo', function (
     expect($profile->name)->toBe('Warung Rasa')
         ->and($profile->history)->toBe($input['history'])
         ->and(base64_decode($profile->logo_data, true))->not->toBeFalse();
+
+    $this->get('/login')
+        ->assertOk()
+        ->assertSee('/restaurant-logo');
+    $this->get('/restaurant-logo')
+        ->assertOk()
+        ->assertHeader('Content-Type', 'image/png')
+        ->assertContent($logoContents);
 });
 
 test('restaurant profile updates validate image type and text lengths', function () {
     $admin = User::factory()->create(['role' => 'admin']);
 
     $this->actingAs($admin, 'sanctum')
-        ->postJson('/api/restaurant-profile', [
+        ->postJson('/api/admin/restaurant-profile', [
             'name' => str_repeat('A', 101),
             'history' => str_repeat('B', 5001),
             'logo' => UploadedFile::fake()->create('logo.txt', 10, 'text/plain'),

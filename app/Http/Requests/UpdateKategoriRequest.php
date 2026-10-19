@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\Kategoris;
 use App\Models\Minuman;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
@@ -30,12 +31,17 @@ class UpdateKategoriRequest extends FormRequest
                 return;
             }
 
+            $category = $this->route('id');
             $hasMinumans = Minuman::withTrashed()
                 ->where('kategori_id', $this->route('id'))
                 ->exists();
             $namaKategori = mb_strtolower((string) $this->input('nama_kategori'));
+            $isDrinkCategory = str_starts_with(
+                mb_strtolower((string) Kategoris::query()->find($category)?->nama_kategori),
+                'minuman ',
+            );
 
-            if ($hasMinumans && ! str_starts_with($namaKategori, 'minuman ')) {
+            if (($hasMinumans || $isDrinkCategory) && ! str_starts_with($namaKategori, 'minuman ')) {
                 $validator->errors()->add(
                     'nama_kategori',
                     'Kategori yang digunakan minuman harus tetap diawali dengan Minuman.',

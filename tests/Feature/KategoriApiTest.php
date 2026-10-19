@@ -11,7 +11,7 @@ test('bulk kategoris validation returns 422 instead of 500', function () {
     $user->forceFill(['role' => 'admin'])->save();
 
     $this->actingAs($user, 'sanctum')
-        ->postJson('/api/kategoris/bulk', [])
+        ->postJson('/api/admin/kategoris/bulk', [])
         ->assertStatus(422);
 });
 

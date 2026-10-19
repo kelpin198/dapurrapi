@@ -32,6 +32,101 @@ function escapeHtml(value) {
     );
 }
 
+function removeConnectedWhiteLogoBackground(image) {
+    if (image.dataset.backgroundRemoved === "true") return;
+
+    const width = image.naturalWidth;
+    const height = image.naturalHeight;
+    if (!width || !height) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return;
+
+    context.drawImage(image, 0, 0);
+
+    let pixels;
+    try {
+        pixels = context.getImageData(0, 0, width, height);
+    } catch {
+        return;
+    }
+
+    const { data } = pixels;
+    const pixelCount = width * height;
+    const visited = new Uint8Array(pixelCount);
+    const queue = new Uint32Array(pixelCount);
+    let head = 0;
+    let tail = 0;
+
+    const isEdgeWhite = (pixelIndex) => {
+        const offset = pixelIndex * 4;
+        const red = data[offset];
+        const green = data[offset + 1];
+        const blue = data[offset + 2];
+
+        return (
+            red >= 238 &&
+            green >= 238 &&
+            blue >= 238 &&
+            Math.max(red, green, blue) - Math.min(red, green, blue) <= 18
+        );
+    };
+
+    const enqueue = (pixelIndex) => {
+        if (visited[pixelIndex] || !isEdgeWhite(pixelIndex)) return;
+
+        visited[pixelIndex] = 1;
+        queue[tail] = pixelIndex;
+        tail += 1;
+    };
+
+    for (let x = 0; x < width; x += 1) {
+        enqueue(x);
+        enqueue((height - 1) * width + x);
+    }
+    for (let y = 1; y < height - 1; y += 1) {
+        enqueue(y * width);
+        enqueue(y * width + width - 1);
+    }
+
+    while (head < tail) {
+        const pixelIndex = queue[head];
+        head += 1;
+        const x = pixelIndex % width;
+        const y = Math.floor(pixelIndex / width);
+
+        if (x > 0) enqueue(pixelIndex - 1);
+        if (x < width - 1) enqueue(pixelIndex + 1);
+        if (y > 0) enqueue(pixelIndex - width);
+        if (y < height - 1) enqueue(pixelIndex + width);
+    }
+
+    for (let pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += 1) {
+        if (visited[pixelIndex]) data[pixelIndex * 4 + 3] = 0;
+    }
+
+    context.putImageData(pixels, 0, 0);
+    image.src = canvas.toDataURL("image/png");
+    image.dataset.backgroundRemoved = "true";
+}
+
+function initializeLoginLogo() {
+    document.querySelectorAll(".login-brand-logo").forEach((image) => {
+        if (image.complete) {
+            removeConnectedWhiteLogoBackground(image);
+        } else {
+            image.addEventListener(
+                "load",
+                () => removeConnectedWhiteLogoBackground(image),
+                { once: true },
+            );
+        }
+    });
+}
+
 function updateRecentCarouselControls() {
     const grid = document.querySelector("[data-recent-foods]");
     const controls = document.querySelector("[data-recent-controls]");
@@ -180,6 +275,12 @@ async function requestApi(path, { token, ...options } = {}) {
     return payload;
 }
 
+function catalogApiPath(resource, suffix = "") {
+    const prefix = window.dapurRapiUserRole === "admin" ? "admin/" : "";
+
+    return `${prefix}${resource}${suffix ? `/${suffix}` : ""}`;
+}
+
 async function optimizeRestaurantLogo(file) {
     if (file.size <= restaurantLogoMaxBytes) return file;
     if (typeof createImageBitmap !== "function") {
@@ -235,6 +336,32 @@ async function optimizeRestaurantLogo(file) {
 function initializeAuthForms() {
     const loginForm = document.querySelector('[data-auth-form="login"]');
     const registerForm = document.querySelector('[data-auth-form="register"]');
+    const passwordInput = loginForm?.querySelector("[data-login-password]");
+    const passwordVisibilityButton = loginForm?.querySelector(
+        "[data-password-visibility]",
+    );
+
+    passwordVisibilityButton?.addEventListener("click", () => {
+        const isVisible = passwordInput.type === "text";
+        passwordInput.type = isVisible ? "password" : "text";
+        passwordVisibilityButton.setAttribute(
+            "aria-pressed",
+            String(!isVisible),
+        );
+        passwordVisibilityButton.setAttribute(
+            "aria-label",
+            isVisible ? "Tampilkan kata sandi" : "Sembunyikan kata sandi",
+        );
+        passwordVisibilityButton.title = isVisible
+            ? "Tampilkan kata sandi"
+            : "Sembunyikan kata sandi";
+        passwordVisibilityButton
+            .querySelector("[data-password-eye-open]")
+            .toggleAttribute("hidden", isVisible);
+        passwordVisibilityButton
+            .querySelector("[data-password-eye-closed]")
+            .toggleAttribute("hidden", !isVisible);
+    });
 
     if (
         new URLSearchParams(window.location.search).has("registered") &&
@@ -549,7 +676,7 @@ function initializeNavigation() {
             searchTimeout = window.setTimeout(async () => {
                 try {
                     const payload = await requestApi(
-                        `makanans?search=${encodeURIComponent(query)}`,
+                        `${catalogApiPath("makanans")}?search=${encodeURIComponent(query)}`,
                         {
                             token: window.dapurRapiToken,
                         },
@@ -961,7 +1088,6 @@ function renderTransactions(transactions, pagination = {}) {
             };
             const paymentStatusOptions = Object.entries(paymentStatuses);
             const isRefunded = payment?.status === "refunded";
-            const isPinnedPaid = isAdmin && payment?.status === "paid";
             const isCompletedOrPaid =
                 status === "selesai" || payment?.status === "paid";
             const isLocked = isRefunded || isCompletedOrPaid;
@@ -998,8 +1124,8 @@ function renderTransactions(transactions, pagination = {}) {
                 : '<span class="payment-status-label">Belum ada data</span>';
 
             return `
-            <tr class="${isAdmin && isRefunded ? "transaction-row-refunded" : isAdmin && isCompletedOrPaid ? "transaction-row-completed" : ""}" ${isAdmin && isLocked ? 'aria-disabled="true"' : ""}>
-				<td><span>#${escapeHtml(String(transaction.id).padStart(4, "0"))}</span>${isPinnedPaid ? '<span class="transaction-pinned-label" title="Pembayaran lunas disematkan di bagian atas">Disematkan</span>' : ""}</td>
+            <tr data-transaction-row-status="${escapeHtml(status)}" data-transaction-row-payment-status="${escapeHtml(payment?.status ?? "")}" class="${isAdmin && isRefunded ? "transaction-row-refunded" : isAdmin && isCompletedOrPaid ? "transaction-row-completed" : ""}" ${isAdmin && isLocked ? 'aria-disabled="true"' : ""}>
+                <td><span>#${escapeHtml(String(transaction.id).padStart(4, "0"))}</span></td>
                 ${isAdmin ? `<td>${escapeHtml(transaction.user?.name ?? "Pengguna")}</td>` : ""}
                 <td>${foodItems}</td>
 				<td>${escapeHtml(formatDate(transaction.created_at))}</td>
@@ -1022,7 +1148,19 @@ function transactionRequestPath(page) {
 
     if (search) params.set("search", search);
 
-    return `transaksis?${params.toString()}`;
+    const status = document.querySelector(
+        "[data-transaction-status-filter]",
+    )?.value;
+    const paymentStatus = document.querySelector(
+        "[data-transaction-payment-filter]",
+    )?.value;
+
+    if (status) params.set("status", status);
+    if (paymentStatus) params.set("payment_status", paymentStatus);
+
+    const prefix = window.dapurRapiUserRole === "admin" ? "admin/" : "";
+
+    return `${prefix}transaksis?${params.toString()}`;
 }
 
 async function loadTransactionPage(page) {
@@ -1101,9 +1239,12 @@ function showNewOrderNotification(transaction) {
 
 async function pollForNewAdminOrders() {
     try {
-        const payload = await requestApi("transaksis?page=1", {
-            token: window.dapurRapiToken,
-        });
+        const payload = await requestApi(
+            `${window.dapurRapiUserRole === "admin" ? "admin/" : ""}transaksis?page=1`,
+            {
+                token: window.dapurRapiToken,
+            },
+        );
         const transactions = unwrapData(payload);
         const newTransactions = transactions
             .filter(
@@ -1131,7 +1272,7 @@ async function approvePendingTransaction(transactionId, button) {
     button.disabled = true;
 
     try {
-        await requestApi(`transaksis/${transactionId}/status`, {
+        await requestApi(`admin/transaksis/${transactionId}/status`, {
             method: "PUT",
             token: window.dapurRapiToken,
             body: JSON.stringify({ status: "diproses" }),
@@ -1169,7 +1310,8 @@ function filterTransactions() {
     let visibleCount = 0;
 
     rows.forEach((row) => {
-        const status = row.querySelector("[data-transaction-status]")?.value;
+        const status = row.dataset.transactionRowStatus;
+        const paymentStatus = row.dataset.transactionRowPaymentStatus;
         const rowText = [...row.cells]
             .map((cell) => {
                 const select = cell.querySelector("select");
@@ -1180,7 +1322,12 @@ function filterTransactions() {
             .join(" ");
         const matchesQuery = rowText.toLocaleLowerCase("id-ID").includes(query);
         const matchesStatus = !selectedStatus || status === selectedStatus;
-        row.hidden = !(matchesQuery && matchesStatus);
+        const selectedPaymentStatus = document.querySelector(
+            "[data-transaction-payment-filter]",
+        ).value;
+        const matchesPaymentStatus =
+            !selectedPaymentStatus || paymentStatus === selectedPaymentStatus;
+        row.hidden = !(matchesQuery && matchesStatus && matchesPaymentStatus);
         if (!row.hidden) visibleCount += 1;
     });
 
@@ -1299,24 +1446,30 @@ function openRestaurantDialog() {
 }
 
 async function loadDashboardData(token) {
+    const profilePayload = await requestApi("me", { token });
+    const profile = profilePayload.data;
+    window.dapurRapiUserRole = profile.role === "admin" ? "admin" : "user";
+
     const [
-        profilePayload,
         foodPayload,
         drinkPayload,
         categoryPayload,
         transactionPayload,
         restaurantProfilePayload,
     ] = await Promise.all([
-        requestApi("me", { token }),
-        requestApi("makanans", { token }),
-        requestApi("minumans", { token }),
-        requestApi("kategoris", { token }),
+        requestApi(catalogApiPath("makanans"), { token }),
+        requestApi(catalogApiPath("minumans"), { token }),
+        requestApi(catalogApiPath("kategoris"), { token }),
         requestApi(transactionRequestPath(currentTransactionPage), {
             token,
         }),
-        requestApi("restaurant-profile", { token }),
+        requestApi(
+            profile.role === "admin"
+                ? "admin/restaurant-profile"
+                : "restaurant-profile",
+            { token },
+        ),
     ]);
-    const profile = profilePayload.data;
     const foods = unwrapData(foodPayload);
     const drinks = unwrapData(drinkPayload);
     const categories = unwrapData(categoryPayload);
@@ -1330,7 +1483,6 @@ async function loadDashboardData(token) {
     window.dapurRapiFoods = foods;
     window.dapurRapiDrinks = drinks;
     window.dapurRapiCategories = categories;
-    window.dapurRapiUserRole = profile.role === "admin" ? "admin" : "user";
     renderRestaurantProfile(restaurantProfilePayload.data);
     if (window.dapurRapiUserRole === "admin" && !adminOrderWatchInitialized) {
         latestKnownAdminTransactionId = Math.max(
@@ -1727,11 +1879,16 @@ function initializeDashboardActions() {
                     );
                 }
 
-                const payload = await requestApi("restaurant-profile", {
-                    method: "POST",
-                    token: window.dapurRapiToken,
-                    body: formData,
-                });
+                const payload = await requestApi(
+                    window.dapurRapiUserRole === "admin"
+                        ? "admin/restaurant-profile"
+                        : "restaurant-profile",
+                    {
+                        method: "POST",
+                        token: window.dapurRapiToken,
+                        body: formData,
+                    },
+                );
                 renderRestaurantProfile(payload.data);
                 document.querySelector("[data-restaurant-dialog]").close();
                 showDashboardNotice(payload.message, "success");
@@ -1818,7 +1975,10 @@ function initializeDashboardActions() {
         });
     document
         .querySelector("[data-transaction-status-filter]")
-        ?.addEventListener("change", filterTransactions);
+        ?.addEventListener("change", () => loadTransactionPage(1));
+    document
+        .querySelector("[data-transaction-payment-filter]")
+        ?.addEventListener("change", () => loadTransactionPage(1));
     document
         .querySelector("[data-transaction-previous]")
         ?.addEventListener("click", () =>
@@ -1892,7 +2052,7 @@ function initializeDashboardActions() {
             drinkSearchTimeout = window.setTimeout(async () => {
                 try {
                     const payload = await requestApi(
-                        `minumans?search=${encodeURIComponent(query)}`,
+                        `${catalogApiPath("minumans")}?search=${encodeURIComponent(query)}`,
                         { token: window.dapurRapiToken },
                     );
                     const drinks = unwrapData(payload);
@@ -1925,11 +2085,16 @@ function initializeDashboardActions() {
 
             button.disabled = true;
             try {
-                await requestApi(drinkId ? `minumans/${drinkId}` : "minumans", {
-                    method: drinkId ? "PUT" : "POST",
-                    token: window.dapurRapiToken,
-                    body: JSON.stringify(payload),
-                });
+                await requestApi(
+                    drinkId
+                        ? catalogApiPath("minumans", drinkId)
+                        : catalogApiPath("minumans"),
+                    {
+                        method: drinkId ? "PUT" : "POST",
+                        token: window.dapurRapiToken,
+                        body: JSON.stringify(payload),
+                    },
+                );
                 document.querySelector("[data-drink-dialog]").close();
                 showDashboardNotice(
                     drinkId
@@ -1975,7 +2140,7 @@ function initializeDashboardActions() {
                     return;
 
                 try {
-                    await requestApi(`minumans/${drinkId}`, {
+                    await requestApi(catalogApiPath("minumans", drinkId), {
                         method: "DELETE",
                         token: window.dapurRapiToken,
                     });
@@ -2028,7 +2193,7 @@ function initializeDashboardActions() {
                     return;
 
                 try {
-                    await requestApi(`makanans/${foodId}`, {
+                    await requestApi(catalogApiPath("makanans", foodId), {
                         method: "DELETE",
                         token: window.dapurRapiToken,
                     });
@@ -2100,7 +2265,7 @@ function initializeDashboardActions() {
                 return;
 
             try {
-                await requestApi(`kategoris/${categoryId}`, {
+                await requestApi(catalogApiPath("kategoris", categoryId), {
                     method: "DELETE",
                     token: window.dapurRapiToken,
                 });
@@ -2125,7 +2290,7 @@ function initializeDashboardActions() {
             approveButton.disabled = true;
 
             try {
-                await requestApi(`transaksis/${transactionId}/status`, {
+                await requestApi(`admin/transaksis/${transactionId}/status`, {
                     method: "PUT",
                     token: window.dapurRapiToken,
                     body: JSON.stringify({ status: "diproses" }),
@@ -2159,7 +2324,7 @@ function initializeDashboardActions() {
                 paymentSelect.disabled = true;
                 try {
                     await requestApi(
-                        `transaksis/${transactionId}/payment-status`,
+                        `admin/transaksis/${transactionId}/payment-status`,
                         {
                             method: "PUT",
                             token: window.dapurRapiToken,
@@ -2190,7 +2355,7 @@ function initializeDashboardActions() {
 
             select.disabled = true;
             try {
-                await requestApi(`transaksis/${transactionId}/status`, {
+                await requestApi(`admin/transaksis/${transactionId}/status`, {
                     method: "PUT",
                     token: window.dapurRapiToken,
                     body: JSON.stringify({ status }),
@@ -2226,11 +2391,16 @@ function initializeDashboardActions() {
 
             button.disabled = true;
             try {
-                await requestApi(foodId ? `makanans/${foodId}` : "makanans", {
-                    method: foodId ? "PUT" : "POST",
-                    token: window.dapurRapiToken,
-                    body: JSON.stringify(payload),
-                });
+                await requestApi(
+                    foodId
+                        ? catalogApiPath("makanans", foodId)
+                        : catalogApiPath("makanans"),
+                    {
+                        method: foodId ? "PUT" : "POST",
+                        token: window.dapurRapiToken,
+                        body: JSON.stringify(payload),
+                    },
+                );
                 document.querySelector("[data-food-dialog]").close();
                 showDashboardNotice(
                     foodId
@@ -2258,7 +2428,9 @@ function initializeDashboardActions() {
             button.disabled = true;
             try {
                 await requestApi(
-                    categoryId ? `kategoris/${categoryId}` : "kategoris",
+                    categoryId
+                        ? catalogApiPath("kategoris", categoryId)
+                        : catalogApiPath("kategoris"),
                     {
                         method: categoryId ? "PUT" : "POST",
                         token: window.dapurRapiToken,
@@ -2412,6 +2584,7 @@ async function initializeDashboard() {
 }
 
 initializeAuthForms();
+initializeLoginLogo();
 initializeNavigation();
 initializeDashboardActions();
 initializeDashboard();

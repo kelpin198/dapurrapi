@@ -18,9 +18,9 @@ class TransaksisService
         return $this->repository->allByUser($userId, $search);
     }
 
-    public function getAllTransaksi(string $search = '')
+    public function getAllTransaksi(string $search = '', ?string $status = null, ?string $paymentStatus = null)
     {
-        return $this->repository->all($search);
+        return $this->repository->all($search, $status, $paymentStatus);
     }
 
     public function countActiveTransactions(?int $userId = null): int

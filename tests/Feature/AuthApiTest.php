@@ -7,6 +7,18 @@ use Illuminate\Support\Facades\Hash;
 
 uses(RefreshDatabase::class);
 
+test('login page includes an accessible password visibility toggle', function () {
+    $this->get('/login')
+        ->assertOk()
+        ->assertSee('data-password-visibility', false)
+        ->assertSee('Tampilkan kata sandi')
+        ->assertSee('data-password-eye-open', false)
+        ->assertSee('data-password-eye-open viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden', false)
+        ->assertSee('data-password-eye-closed', false)
+        ->assertSee('M2 12c2.3 3.2 5.6 5 10 5s7.7-1.8 10-5', false)
+        ->assertDontSee('m3 3 18 18', false);
+});
+
 test('a user can register and log in with an eight character password', function () {
     $registration = $this->postJson('/api/register', [
         'name' => 'Kelvin Alfattama',

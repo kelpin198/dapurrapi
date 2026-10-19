@@ -7,7 +7,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 
 uses(RefreshDatabase::class);
 
-test('admin sees older paid transactions pinned before newer unpaid transactions across pages', function () {
+test('admin sees unfinished transactions before paid history and can filter paid transactions', function () {
     $user = User::factory()->create();
     $admin = User::factory()->create(['role' => 'admin']);
 
@@ -25,6 +25,8 @@ test('admin sees older paid transactions pinned before newer unpaid transactions
         'status' => 'paid',
     ]);
 
+    $latestPendingTransactionId = null;
+
     foreach (range(1, 11) as $index) {
         $transaction = Transaksis::create([
             'user_id' => $user->id,
@@ -39,12 +41,20 @@ test('admin sees older paid transactions pinned before newer unpaid transactions
             'amount' => $transaction->total_harga,
             'status' => 'pending',
         ]);
+        $latestPendingTransactionId = $transaction->id;
     }
 
     $this->actingAs($admin, 'sanctum')
-        ->getJson('/api/transaksis')
+        ->getJson('/api/admin/transaksis')
         ->assertOk()
         ->assertJsonCount(10, 'data')
+        ->assertJsonPath('data.0.id', $latestPendingTransactionId)
+        ->assertJsonPath('data.0.payments.0.status', 'pending')
+        ->assertJsonPath('pagination.total', 12);
+
+    $this->getJson('/api/admin/transaksis?payment_status=paid')
+        ->assertOk()
+        ->assertJsonCount(1, 'data')
         ->assertJsonPath('data.0.id', $paidTransaction->id)
         ->assertJsonPath('data.0.payments.0.status', 'paid');
 });

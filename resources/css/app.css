@@ -131,6 +131,30 @@ a {
     height: 100%;
     object-fit: cover;
 }
+.brand-mark .login-brand-logo {
+    position: absolute;
+    inset: 0;
+    display: block;
+    max-width: none;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    object-fit: contain;
+}
+.login-brand-mark {
+    width: 88px;
+    height: 88px;
+    flex: 0 0 88px;
+    border-radius: 50%;
+    background: transparent;
+}
+.brand-light .login-brand-mark {
+    background: transparent;
+}
+.login-brand-mark:not(:has(.login-brand-logo)) {
+    color: var(--green-dark);
+    background: #f4ead4;
+}
 .brand-light {
     color: #fff;
 }
@@ -281,6 +305,35 @@ a {
     border-color: #639172;
     background: #fff;
     box-shadow: 0 0 0 3px rgb(45 107 78 / 10%);
+}
+.password-field-wrap {
+    position: relative;
+}
+.password-field-wrap .text-field {
+    padding-right: 50px;
+}
+.password-visibility-toggle {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    transform: translateY(-50%);
+    border: 0;
+    border-radius: 4px;
+    color: #748078;
+    background: transparent;
+}
+.password-visibility-toggle:hover {
+    color: var(--green-dark);
+    background: var(--green-wash);
+}
+.password-visibility-toggle:focus-visible {
+    outline: 2px solid #639172;
+    outline-offset: 1px;
 }
 .button {
     min-height: 46px;

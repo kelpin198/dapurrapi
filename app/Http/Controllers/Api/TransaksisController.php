@@ -24,9 +24,20 @@ class TransaksisController extends Controller
     {
         try {
             $search = trim((string) $request->query('search', ''));
-            $data = $request->user()->isAdmin()
-                ? $this->service->getAllTransaksi($search)
-                : $this->service->getMyTransaksi($request->user()->id, $search);
+            if ($request->user()->isAdmin()) {
+                $filters = $request->validate([
+                    'status' => ['nullable', 'in:pending,diproses,selesai,dibatalkan'],
+                    'payment_status' => ['nullable', 'in:pending,processing,paid,failed,expired,refunded'],
+                ]);
+
+                $data = $this->service->getAllTransaksi(
+                    $search,
+                    $filters['status'] ?? null,
+                    $filters['payment_status'] ?? null,
+                );
+            } else {
+                $data = $this->service->getMyTransaksi($request->user()->id, $search);
+            }
 
             return response()->json([
                 'status' => true,

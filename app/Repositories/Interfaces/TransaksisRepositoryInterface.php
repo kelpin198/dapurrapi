@@ -6,7 +6,7 @@ interface TransaksisRepositoryInterface
 {
     public function allByUser($userId, string $search = '');
 
-    public function all(string $search = '');
+    public function all(string $search = '', ?string $status = null, ?string $paymentStatus = null);
 
     public function countActiveTransactions(?int $userId = null): int;
 
