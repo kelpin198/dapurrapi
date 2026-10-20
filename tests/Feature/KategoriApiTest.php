@@ -1,10 +1,19 @@
 <?php
 
+use App\Models\Kategoris;
 use App\Models\Minuman;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 uses(RefreshDatabase::class);
+
+test('default food categories are created by migrations without running seeders', function () {
+    expect(Kategoris::query()
+        ->whereIn('nama_kategori', ['Makanan Ringan', 'Makanan Berat'])
+        ->pluck('nama_kategori')
+        ->all())
+        ->toEqualCanonicalizing(['Makanan Ringan', 'Makanan Berat']);
+});
 
 test('bulk kategoris validation returns 422 instead of 500', function () {
     $user = User::factory()->create();

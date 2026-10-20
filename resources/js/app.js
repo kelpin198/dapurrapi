@@ -336,32 +336,33 @@ async function optimizeRestaurantLogo(file) {
 function initializeAuthForms() {
     const loginForm = document.querySelector('[data-auth-form="login"]');
     const registerForm = document.querySelector('[data-auth-form="register"]');
-    const passwordInput = loginForm?.querySelector("[data-login-password]");
-    const passwordVisibilityButton = loginForm?.querySelector(
-        "[data-password-visibility]",
-    );
 
-    passwordVisibilityButton?.addEventListener("click", () => {
-        const isVisible = passwordInput.type === "text";
-        passwordInput.type = isVisible ? "password" : "text";
-        passwordVisibilityButton.setAttribute(
-            "aria-pressed",
-            String(!isVisible),
-        );
-        passwordVisibilityButton.setAttribute(
-            "aria-label",
-            isVisible ? "Tampilkan kata sandi" : "Sembunyikan kata sandi",
-        );
-        passwordVisibilityButton.title = isVisible
-            ? "Tampilkan kata sandi"
-            : "Sembunyikan kata sandi";
-        passwordVisibilityButton
-            .querySelector("[data-password-eye-open]")
-            .toggleAttribute("hidden", isVisible);
-        passwordVisibilityButton
-            .querySelector("[data-password-eye-closed]")
-            .toggleAttribute("hidden", !isVisible);
-    });
+    document
+        .querySelectorAll("[data-password-visibility]")
+        .forEach((toggle) => {
+            toggle.addEventListener("click", () => {
+                const passwordInput = document.querySelector(
+                    `[data-${toggle.dataset.passwordTarget}]`,
+                );
+                if (!passwordInput) return;
+
+                const isVisible = passwordInput.type === "text";
+                const nextLabel = isVisible
+                    ? toggle.dataset.showLabel
+                    : toggle.dataset.hideLabel;
+
+                passwordInput.type = isVisible ? "password" : "text";
+                toggle.setAttribute("aria-pressed", String(!isVisible));
+                toggle.setAttribute("aria-label", nextLabel);
+                toggle.title = nextLabel;
+                toggle
+                    .querySelector("[data-password-eye-open]")
+                    .toggleAttribute("hidden", isVisible);
+                toggle
+                    .querySelector("[data-password-eye-closed]")
+                    .toggleAttribute("hidden", !isVisible);
+            });
+        });
 
     if (
         new URLSearchParams(window.location.search).has("registered") &&

@@ -33,7 +33,7 @@
                 <div class="label-row"><label class="field-label" for="password">Kata sandi</label><a class="text-link" href="#" data-unavailable-link>Butuh bantuan?</a></div>
                 <div class="password-field-wrap">
                     <input class="text-field" id="password" name="password" type="password" autocomplete="current-password" placeholder="Masukkan kata sandi" data-login-password required>
-                    <button class="password-visibility-toggle" type="button" data-password-visibility aria-label="Tampilkan kata sandi" aria-pressed="false" title="Tampilkan kata sandi">
+                    <button class="password-visibility-toggle" type="button" data-password-visibility data-password-target="login-password" data-show-label="Tampilkan kata sandi" data-hide-label="Sembunyikan kata sandi" aria-label="Tampilkan kata sandi" aria-pressed="false" title="Tampilkan kata sandi">
                         <svg data-password-eye-open viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
                         <svg data-password-eye-closed viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12c2.3 3.2 5.6 5 10 5s7.7-1.8 10-5"/><path d="m6 15-1 2m13-2 1 2"/></svg>
                     </button>

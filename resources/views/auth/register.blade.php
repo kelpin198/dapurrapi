@@ -33,9 +33,21 @@
                 <label class="field-label" for="email">Alamat email</label>
                 <input class="text-field" id="email" name="email" type="email" autocomplete="email" placeholder="nama@email.com" required>
                 <label class="field-label" for="password">Kata sandi <span class="field-hint">minimal 8 karakter</span></label>
-                <input class="text-field" id="password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" placeholder="Buat kata sandi" required>
+                <div class="password-field-wrap">
+                    <input class="text-field" id="password" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="72" placeholder="Buat kata sandi" data-register-password required>
+                    <button class="password-visibility-toggle" type="button" data-password-visibility data-password-target="register-password" data-show-label="Tampilkan kata sandi" data-hide-label="Sembunyikan kata sandi" aria-label="Tampilkan kata sandi" aria-pressed="false" title="Tampilkan kata sandi">
+                        <svg data-password-eye-open viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+                        <svg data-password-eye-closed viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12c2.3 3.2 5.6 5 10 5s7.7-1.8 10-5"/><path d="m6 15-1 2m13-2 1 2"/></svg>
+                    </button>
+                </div>
                 <label class="field-label" for="password_confirmation">Ulangi kata sandi</label>
-                <input class="text-field" id="password_confirmation" name="password_confirmation" type="password" autocomplete="new-password" minlength="8" maxlength="72" placeholder="Masukkan sekali lagi" required>
+                <div class="password-field-wrap">
+                    <input class="text-field" id="password_confirmation" name="password_confirmation" type="password" autocomplete="new-password" minlength="8" maxlength="72" placeholder="Masukkan sekali lagi" data-register-password-confirmation required>
+                    <button class="password-visibility-toggle" type="button" data-password-visibility data-password-target="register-password-confirmation" data-show-label="Tampilkan konfirmasi kata sandi" data-hide-label="Sembunyikan konfirmasi kata sandi" aria-label="Tampilkan konfirmasi kata sandi" aria-pressed="false" title="Tampilkan konfirmasi kata sandi">
+                        <svg data-password-eye-open viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+                        <svg data-password-eye-closed viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12c2.3 3.2 5.6 5 10 5s7.7-1.8 10-5"/><path d="m6 15-1 2m13-2 1 2"/></svg>
+                    </button>
+                </div>
                 <button class="button button-primary button-wide" type="submit"><span>Buat akun</span><span aria-hidden="true">↗</span></button>
             </form>
             <p class="auth-switch">Sudah punya akun? <a href="{{ route('login') }}">Masuk di sini</a></p>

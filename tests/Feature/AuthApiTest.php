@@ -19,6 +19,16 @@ test('login page includes an accessible password visibility toggle', function ()
         ->assertDontSee('m3 3 18 18', false);
 });
 
+test('register page has independent visibility toggles for password and confirmation', function () {
+    $this->get('/register')
+        ->assertOk()
+        ->assertSee('data-register-password', false)
+        ->assertSee('data-register-password-confirmation', false)
+        ->assertSee('data-password-target="register-password"', false)
+        ->assertSee('data-password-target="register-password-confirmation"', false)
+        ->assertSee('Sembunyikan konfirmasi kata sandi');
+});
+
 test('a user can register and log in with an eight character password', function () {
     $registration = $this->postJson('/api/register', [
         'name' => 'Kelvin Alfattama',
