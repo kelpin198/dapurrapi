@@ -1,15 +1,18 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Notification;
 
 uses(RefreshDatabase::class);
 
 test('login page includes an accessible password visibility toggle', function () {
     $this->get('/login')
         ->assertOk()
+        ->assertSee('data-forgot-password disabled', false)
         ->assertSee('data-password-visibility', false)
         ->assertSee('Tampilkan kata sandi')
         ->assertSee('data-password-eye-open', false)
@@ -136,6 +139,46 @@ test('an authenticated user can update only their own profile name', function ()
 test('profile name cannot be changed without authentication', function () {
     $this->putJson('/api/me/profile', ['name' => 'Nama Baru'])
         ->assertUnauthorized();
+});
+
+test('forgot password sends a reset email without exposing the token', function () {
+    Notification::fake();
+    $user = User::factory()->create(['email' => 'reset@example.test']);
+
+    $this->postJson('/api/forgot-password', ['email' => $user->email])
+        ->assertOk()
+        ->assertJsonPath('status', true)
+        ->assertJsonMissingPath('reset_token');
+
+    Notification::assertSentTo($user, ResetPassword::class);
+});
+
+test('forgot and reset password pages are available from the login flow', function () {
+    $this->get('/login')
+        ->assertOk()
+        ->assertSee('data-forgot-password disabled', false);
+
+    $forgotPasswordPage = $this->get('/forgot-password');
+
+    $forgotPasswordPage
+        ->assertOk()
+        ->assertSee('data-auth-form="forgot-password"', false)
+        ->assertSee('/login');
+
+    expect(substr_count($forgotPasswordPage->getContent(), 'class="login-brand-logo"'))->toBe(2);
+
+    $this->get('/forgot-password?email=reset%40example.test')
+        ->assertOk()
+        ->assertSee('value="reset@example.test"', false);
+
+    $this->get(route('password.reset', [
+        'token' => 'sample-reset-token',
+        'email' => 'reset@example.test',
+    ]))
+        ->assertOk()
+        ->assertSee('data-auth-form="reset-password"', false)
+        ->assertSee('name="token" value="sample-reset-token"', false)
+        ->assertSee('name="email" value="reset@example.test"', false);
 });
 
 test('password reset rejects an incorrect token and accepts the matching token', function () {

@@ -3,7 +3,6 @@ import "./bootstrap";
 const authTokenKey = "dapurRapiToken";
 const authUserKey = "dapurRapiUser";
 const pendingApprovalStorageKey = "dapurRapiPendingApprovalIds";
-const foodImageSearchCache = new Map();
 const restaurantLogoMaxBytes = 1_500_000;
 let currentTransactionPage = 1;
 let latestKnownAdminTransactionId = 0;
@@ -171,71 +170,6 @@ function moveRecentCarouselToPage(page) {
     updateRecentCarouselControls();
 }
 
-function searchCommonsFoodImage(foodName) {
-    const normalizedName = foodName.trim().toLocaleLowerCase("id-ID");
-
-    if (!foodImageSearchCache.has(normalizedName)) {
-        const parameters = new URLSearchParams({
-            action: "query",
-            generator: "search",
-            gsrsearch: normalizedName,
-            gsrnamespace: "6",
-            gsrlimit: "1",
-            prop: "imageinfo",
-            iiprop: "url|extmetadata",
-            iiurlwidth: "520",
-            format: "json",
-            origin: "*",
-        });
-        const searchRequest = fetch(
-            `https://commons.wikimedia.org/w/api.php?${parameters}`,
-        )
-            .then((response) => (response.ok ? response.json() : null))
-            .then((payload) => {
-                const imageInfo = Object.values(payload?.query?.pages ?? {})[0]
-                    ?.imageinfo?.[0];
-
-                if (!imageInfo?.thumburl || !imageInfo.descriptionurl) {
-                    return null;
-                }
-
-                const imageUrl = new URL(imageInfo.thumburl);
-                const sourceUrl = new URL(imageInfo.descriptionurl);
-
-                if (
-                    imageUrl.protocol !== "https:" ||
-                    sourceUrl.protocol !== "https:" ||
-                    !imageUrl.hostname.endsWith("wikimedia.org") ||
-                    !sourceUrl.hostname.endsWith("wikimedia.org")
-                ) {
-                    return null;
-                }
-
-                const metadata = imageInfo.extmetadata ?? {};
-                const artistMarkup = metadata.Artist?.value ?? "";
-                const author = new DOMParser()
-                    .parseFromString(artistMarkup, "text/html")
-                    .body.textContent.trim();
-
-                return {
-                    url: imageUrl.href,
-                    credit: {
-                        author: author || "Wikimedia Commons contributor",
-                        license:
-                            metadata.LicenseShortName?.value ??
-                            "Wikimedia Commons",
-                        url: sourceUrl.href,
-                    },
-                };
-            })
-            .catch(() => null);
-
-        foodImageSearchCache.set(normalizedName, searchRequest);
-    }
-
-    return foodImageSearchCache.get(normalizedName);
-}
-
 function showAuthNotice(message, type = "error") {
     const notice = document.querySelector("[data-notice]");
 
@@ -336,6 +270,36 @@ async function optimizeRestaurantLogo(file) {
 function initializeAuthForms() {
     const loginForm = document.querySelector('[data-auth-form="login"]');
     const registerForm = document.querySelector('[data-auth-form="register"]');
+    const forgotPasswordForm = document.querySelector(
+        '[data-auth-form="forgot-password"]',
+    );
+    const resetPasswordForm = document.querySelector(
+        '[data-auth-form="reset-password"]',
+    );
+    const forgotPasswordButton = document.querySelector(
+        "[data-forgot-password]",
+    );
+
+    if (loginForm && forgotPasswordButton) {
+        const emailInput = loginForm.elements.email;
+        const updateForgotPasswordAvailability = () => {
+            forgotPasswordButton.disabled =
+                !emailInput.value.trim() || !emailInput.validity.valid;
+        };
+
+        emailInput.addEventListener("input", updateForgotPasswordAvailability);
+        updateForgotPasswordAvailability();
+
+        forgotPasswordButton.addEventListener("click", () => {
+            updateForgotPasswordAvailability();
+            if (forgotPasswordButton.disabled) return;
+
+            const query = new URLSearchParams({
+                email: emailInput.value.trim(),
+            });
+            window.location.assign(`/forgot-password?${query.toString()}`);
+        });
+    }
 
     document
         .querySelectorAll("[data-password-visibility]")
@@ -370,6 +334,16 @@ function initializeAuthForms() {
     ) {
         showAuthNotice(
             "Akun berhasil dibuat. Silakan masuk dengan email dan kata sandimu.",
+            "success",
+        );
+    }
+
+    if (
+        new URLSearchParams(window.location.search).has("password-reset") &&
+        loginForm
+    ) {
+        showAuthNotice(
+            "Kata sandi berhasil diatur ulang. Silakan masuk dengan kata sandi baru.",
             "success",
         );
     }
@@ -432,6 +406,60 @@ function initializeAuthForms() {
             showAuthNotice(error.message);
             button.disabled = false;
             button.querySelector("span").textContent = "Buat akun";
+        }
+    });
+
+    forgotPasswordForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = forgotPasswordForm.querySelector(
+            'button[type="submit"]',
+        );
+        const buttonLabel = button.querySelector("span");
+        const formData = Object.fromEntries(new FormData(forgotPasswordForm));
+
+        button.disabled = true;
+        buttonLabel.textContent = "Mengirim tautan...";
+
+        try {
+            const payload = await requestApi("forgot-password", {
+                method: "POST",
+                body: JSON.stringify(formData),
+            });
+
+            showAuthNotice(payload.message, "success");
+            buttonLabel.textContent = "Tautan dikirim";
+        } catch (error) {
+            showAuthNotice(error.message);
+            button.disabled = false;
+            buttonLabel.textContent = "Kirim tautan reset";
+        }
+    });
+
+    resetPasswordForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = resetPasswordForm.querySelector('button[type="submit"]');
+        const buttonLabel = button.querySelector("span");
+        const formData = Object.fromEntries(new FormData(resetPasswordForm));
+
+        if (formData.password !== formData.password_confirmation) {
+            showAuthNotice("Konfirmasi kata sandi belum sama.");
+            return;
+        }
+
+        button.disabled = true;
+        buttonLabel.textContent = "Menyimpan kata sandi...";
+
+        try {
+            await requestApi("reset-password", {
+                method: "POST",
+                body: JSON.stringify(formData),
+            });
+
+            window.location.assign("/login?password-reset=1");
+        } catch (error) {
+            showAuthNotice(error.message);
+            button.disabled = false;
+            buttonLabel.textContent = "Simpan kata sandi baru";
         }
     });
 }
@@ -882,28 +910,19 @@ function renderOverview(
         })),
     ].reverse();
     const foodImages = {
-        "nasi pecel":
-            "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Nasi_Pecel_Khas_Blitar.jpg/960px-Nasi_Pecel_Khas_Blitar.jpg",
-        "nasi bakar":
-            "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6f/Nasi_Bakar_Ayam.JPG/960px-Nasi_Bakar_Ayam.JPG",
-        "sosis solo":
-            "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d2/Sosis_Solo.jpg/960px-Sosis_Solo.jpg",
+        "nasi goreng": "/images/nasi-goreng.jpg",
+        "es jeruk": "/images/es-jeruk.jpg",
     };
     const foodImageCredits = {
-        "nasi pecel": {
+        "nasi goreng": {
             author: "Supardisahabu",
             license: "CC BY-SA 4.0",
-            url: "https://commons.wikimedia.org/wiki/File:Nasi_Pecel_Khas_Blitar.jpg",
+            url: "https://commons.wikimedia.org/wiki/File:Nasi_Goreng_Kampung.jpg",
         },
-        "nasi bakar": {
-            author: "Gunawan Kartapranata",
-            license: "CC BY-SA 3.0",
-            url: "https://commons.wikimedia.org/wiki/File:Nasi_Bakar_Ayam.JPG",
-        },
-        "sosis solo": {
-            author: "Aininapple",
-            license: "CC BY-SA 4.0",
-            url: "https://commons.wikimedia.org/wiki/File:Sosis_Solo.jpg",
+        "es jeruk": {
+            author: "Fajrotul05",
+            license: "CC BY 2.5",
+            url: "https://commons.wikimedia.org/wiki/File:Es_jeruk.jpg",
         },
     };
     const recentContainer = document.querySelector("[data-recent-foods]");
@@ -916,11 +935,7 @@ function renderOverview(
                       const foodName = product.name
                           .trim()
                           .toLocaleLowerCase("id-ID");
-                      const foodImage =
-                          foodImages[foodName] ??
-                          (product.kind === "minuman"
-                              ? "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=520&h=260&q=78"
-                              : "https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=520&h=260&q=78");
+                      const foodImage = foodImages[foodName];
                       const imageCredit = foodImageCredits[foodName];
                       const imageCreditMarkup = imageCredit
                           ? `<a class="recent-photo-credit" href="${imageCredit.url}" target="_blank" rel="noopener noreferrer" title="Foto oleh ${escapeHtml(imageCredit.author)}, ${imageCredit.license}" aria-label="Kredit foto oleh ${escapeHtml(imageCredit.author)}, ${imageCredit.license}">i</a>`
@@ -928,7 +943,7 @@ function renderOverview(
 
                       return `
 			<article class="recent-card">
-                <div class="recent-photo-wrap"><div class="recent-photo" data-product-id="${escapeHtml(product.id)}" data-product-kind="${product.kind}" role="img" aria-label="Foto ${escapeHtml(product.name)}" style="background-image:url('${foodImage}')"></div>${imageCreditMarkup}</div>
+                <div class="recent-photo-wrap"><div class="recent-photo" data-product-id="${escapeHtml(product.id)}" data-product-kind="${product.kind}" role="img" aria-label="${foodImage ? `Foto ${escapeHtml(product.name)}` : `Foto untuk ${escapeHtml(product.name)} belum tersedia`}" ${foodImage ? `style="background-image:url('${foodImage}')"` : ""}></div>${imageCreditMarkup}</div>
                 <div class="recent-copy"><strong>${escapeHtml(product.name)}</strong><span>${product.kind === "minuman" ? escapeHtml(product.category) : `Makanan · ${escapeHtml(product.category)}`}</span></div>
 			</article>
 		`;
@@ -936,33 +951,6 @@ function renderOverview(
                   .join("")
             : '<div class="empty-inline">Belum ada makanan atau minuman yang terdaftar.</div>';
         updateRecentCarouselControls();
-
-        recentProducts.forEach((product) => {
-            const foodName = product.name.trim().toLocaleLowerCase("id-ID");
-
-            if (foodImages[foodName]) return;
-
-            searchCommonsFoodImage(foodName).then((image) => {
-                if (!image) return;
-
-                const imageElement = recentContainer.querySelector(
-                    `[data-product-id="${Number(product.id)}"][data-product-kind="${product.kind}"]`,
-                );
-                if (!imageElement) return;
-
-                const creditLink = imageElement.nextElementSibling;
-                if (!(creditLink instanceof HTMLAnchorElement)) return;
-
-                imageElement.style.backgroundImage = `url("${image.url}")`;
-                creditLink.href = image.credit.url;
-                creditLink.title = `Foto oleh ${image.credit.author}, ${image.credit.license}`;
-                creditLink.setAttribute(
-                    "aria-label",
-                    `Kredit foto oleh ${image.credit.author}, ${image.credit.license}`,
-                );
-                creditLink.hidden = false;
-            });
-        });
     }
 }
 

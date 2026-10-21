@@ -8,24 +8,23 @@ export default defineConfig({
             input: ["resources/css/app.css", "resources/js/app.js"],
             refresh: [
                 "app/**",
+                "bootstrap/**",
                 "config/**",
+                "database/migrations/**",
                 "database/seeders/**",
                 "lang/**",
+                "public/images/**",
                 "resources/lang/**",
                 "resources/views/**",
                 "routes/**",
+                "storage/app/private/restaurant-profile/**",
             ],
         }),
         tailwindcss(),
     ],
     server: {
-        origin: "https://earn-injection-fraction-captain.trycloudflare.com",
-        allowedHosts: [".trycloudflare.com"],
-        hmr: {
-            host: "earn-injection-fraction-captain.trycloudflare.com",
-            protocol: "wss",
-            clientPort: 443,
-        },
+        host: "0.0.0.0",
+        origin: "http://localhost:5173",
         cors: {
             origin: [
                 "http://apk-sederhana.test",

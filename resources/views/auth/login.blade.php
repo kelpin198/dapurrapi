@@ -30,7 +30,7 @@
             <form class="auth-form" data-auth-form="login">
                 <label class="field-label" for="email">Alamat email</label>
                 <input class="text-field" id="email" name="email" type="email" autocomplete="email" placeholder="nama@email.com" required>
-                <div class="label-row"><label class="field-label" for="password">Kata sandi</label><a class="text-link" href="#" data-unavailable-link>Butuh bantuan?</a></div>
+                <div class="label-row"><label class="field-label" for="password">Kata sandi</label><button class="text-link" type="button" data-forgot-password disabled>Lupa kata sandi?</button></div>
                 <div class="password-field-wrap">
                     <input class="text-field" id="password" name="password" type="password" autocomplete="current-password" placeholder="Masukkan kata sandi" data-login-password required>
                     <button class="password-visibility-toggle" type="button" data-password-visibility data-password-target="login-password" data-show-label="Tampilkan kata sandi" data-hide-label="Sembunyikan kata sandi" aria-label="Tampilkan kata sandi" aria-pressed="false" title="Tampilkan kata sandi">

@@ -1,19 +1,47 @@
 <?php
 
-use Illuminate\Support\Facades\cache;
-use Illuminate\Support\Facades\Route;
 use App\Models\RestaurantProfile;
+use Illuminate\Support\Facades\cache;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Storage;
 
 $loginPage = static fn () => view('auth.login', [
-    'hasRestaurantLogo' => RestaurantProfile::query()->whereNotNull('logo_data')->exists(),
+    'hasRestaurantLogo' => RestaurantProfile::hasLogo(),
 ]);
 
 Route::get('/', $loginPage);
 Route::get('/login', $loginPage)->name('login');
 Route::view('/register', 'auth.register')->name('register');
+Route::get('/forgot-password', static function () {
+    return view('auth.forgot-password', [
+        'hasRestaurantLogo' => RestaurantProfile::hasLogo(),
+    ]);
+})->name('password.request');
+Route::get('/reset-password/{token}', static function (string $token) {
+    return view('auth.reset-password', [
+        'token' => $token,
+        'email' => request()->query('email', ''),
+    ]);
+})->name('password.reset');
 Route::view('/dashboard', 'dashboard')->name('dashboard');
 
 Route::get('/restaurant-logo', static function () {
+    $storedLogoPath = RestaurantProfile::storedLogoPath();
+
+    if ($storedLogoPath !== null) {
+        $disk = Storage::disk('local');
+        $mimeType = File::mimeType($disk->path($storedLogoPath));
+        $supportedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+
+        abort_unless(in_array($mimeType, $supportedMimeTypes, true), 404);
+
+        return response($disk->get($storedLogoPath), 200, [
+            'Content-Type' => $mimeType,
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+        ]);
+    }
+
     $profile = RestaurantProfile::query()->whereNotNull('logo_data')->first();
     $supportedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
 
@@ -28,9 +56,9 @@ Route::get('/restaurant-logo', static function () {
 
     return response($logo, 200, [
         'Content-Type' => $profile->logo_mime_type,
-        'Cache-Control' => 'public, max-age=3600',
+        'Cache-Control' => 'no-store, no-cache, must-revalidate',
     ]);
-});
+})->name('restaurant-logo');
 
 // Provide a safe named `login` route so unauthenticated redirects from
 // middleware do not throw when API clients omit Accept headers.

@@ -4,10 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -64,7 +65,7 @@ class AuthController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'email' => 'required|email|exists:users,email',
+                'email' => 'required|email',
             ]);
 
             if ($validator->fails()) {
@@ -75,24 +76,11 @@ class AuthController extends Controller
                 ], 422);
             }
 
-            $email = $request->email;
-
-            // hapus token lama untuk email ini, supaya cuma 1 token yang aktif
-            DB::table('password_reset_tokens')->where('email', $email)->delete();
-
-            // buat token baru random
-            $token = Str::random(60);
-            DB::table('password_reset_tokens')->insert([
-                'email' => $email,
-                'token' => Hash::make($token),
-                'created_at' => now(),
-            ]);
+            Password::sendResetLink($validator->validated());
 
             return response()->json([
                 'status' => true,
-                'message' => 'Token reset password berhasil dibuat. Silahkan Cek email anda.',
-                'reset_token' => $token,
-
+                'message' => 'Jika email terdaftar, tautan untuk mengatur ulang kata sandi akan dikirim.',
             ], 200);
         } catch (\Throwable $exception) {
             return $this->serverError($exception);
@@ -104,7 +92,7 @@ class AuthController extends Controller
     {
         try {
             $validator = Validator::make($request->all(), [
-                'email' => 'required|email|exists:users,email',
+                'email' => 'required|email',
                 'token' => 'required|string',
                 'password' => 'required|string|min:8|max:72|confirmed',
             ]);
@@ -116,49 +104,29 @@ class AuthController extends Controller
                     'errors' => $validator->errors(),
                 ], 422);
             }
-            $record = DB::table('password_reset_tokens')
-                ->where('email', $request->email)
-                ->first();
+            $validated = $validator->validated();
+            $status = Password::reset(
+                $validated,
+                function (User $user, string $password): void {
+                    $user->forceFill(['password' => Hash::make($password)])->save();
+                    $user->tokens()->delete();
+                    event(new PasswordReset($user));
+                }
+            );
 
-            if (! $record) {
+            if ($status === Password::PASSWORD_RESET) {
                 return response()->json([
-                    'status' => false,
-                    'message' => 'Token reset password tidak ditemukan. Silahkan coba lagi.',
-                ], 404);
+                    'status' => true,
+                    'message' => 'Kata sandi berhasil diatur ulang. Silakan masuk dengan kata sandi baru.',
+                ]);
             }
-
-            if (! Hash::check($request->token, $record->token)) {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'Token reset password tidak valid.',
-                ], 422);
-            }
-
-            // cek token belum expired (misal 60 menit)
-            $expiredMinutes = 60;
-            if (now()->diffInMinutes($record->created_at) > $expiredMinutes) {
-                DB::table('password_reset_tokens')->where('email', $request->email)->delete();
-
-                return response()->json([
-                    'status' => false,
-                    'message' => 'Token sudah kadaluarsa. Silahkan buat token baru.',
-                ], 422);
-            }
-
-            // Update password user
-            $user = User::where('email', $request->email)->first();
-            $user->update([
-                'password' => Hash::make($request->password),
-            ]);
-
-            // hapus token setelah di pakai
-            DB::table('password_reset_tokens')->where('email', $request->email)->delete();
-            $user->tokens()->delete(); // hapus semua token lama supaya harus login lagi
 
             return response()->json([
-                'status' => true,
-                'message' => 'Password berhasil direset, Silahkan login ulang',
-            ], 200);
+                'status' => false,
+                'message' => $status === Password::INVALID_TOKEN
+                    ? 'Tautan reset tidak valid atau sudah kedaluwarsa. Minta tautan baru.'
+                    : 'Email tidak dapat diproses untuk reset kata sandi.',
+            ], $status === Password::RESET_THROTTLED ? 429 : 422);
         } catch (\Throwable $exception) {
             return $this->serverError($exception);
         }

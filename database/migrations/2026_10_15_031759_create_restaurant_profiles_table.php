@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('restaurant_profiles', function (Blueprint $table) {
             $table->id();
-            $table->string('name', 100)->default('Dapur Rapi');
+            $table->string('name', 100)->default('Dapurrapi');
             $table->text('history')->nullable();
             $table->longText('logo_data')->nullable();
             $table->string('logo_mime_type', 50)->nullable();

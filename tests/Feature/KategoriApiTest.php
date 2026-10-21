@@ -3,11 +3,26 @@
 use App\Models\Kategoris;
 use App\Models\Minuman;
 use App\Models\User;
+use Database\Seeders\DatabaseSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 uses(RefreshDatabase::class);
 
 test('default food categories are created by migrations without running seeders', function () {
+    expect(Kategoris::query()
+        ->whereIn('nama_kategori', ['Makanan Ringan', 'Makanan Berat'])
+        ->pluck('nama_kategori')
+        ->all())
+        ->toEqualCanonicalizing(['Makanan Ringan', 'Makanan Berat']);
+});
+
+test('database seeder recreates default food categories', function () {
+    Kategoris::withTrashed()
+        ->whereIn('nama_kategori', ['Makanan Ringan', 'Makanan Berat'])
+        ->forceDelete();
+
+    $this->seed(DatabaseSeeder::class);
+
     expect(Kategoris::query()
         ->whereIn('nama_kategori', ['Makanan Ringan', 'Makanan Berat'])
         ->pluck('nama_kategori')

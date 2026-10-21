@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\UpdateRestaurantProfileRequest;
 use App\Models\RestaurantProfile;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Storage;
 
 class RestaurantProfileController extends Controller
 {
@@ -24,8 +25,32 @@ class RestaurantProfileController extends Controller
 
         if ($request->hasFile('logo')) {
             $logo = $request->file('logo');
-            $data['logo_data'] = base64_encode($logo->get());
-            $data['logo_mime_type'] = $logo->getMimeType();
+            $extension = match ($logo->getMimeType()) {
+                'image/jpeg' => 'jpg',
+                'image/png' => 'png',
+                'image/webp' => 'webp',
+                default => null,
+            };
+
+            abort_unless($extension !== null, 422, 'Format logo tidak didukung.');
+
+            $logoPath = 'restaurant-profile/logo.'.$extension;
+            abort_unless(
+                Storage::disk('local')->put($logoPath, $logo->get()),
+                500,
+                'Logo restoran gagal disimpan.'
+            );
+
+            foreach (['jpg', 'jpeg', 'png', 'webp'] as $existingExtension) {
+                $existingPath = 'restaurant-profile/logo.'.$existingExtension;
+
+                if ($existingPath !== $logoPath) {
+                    Storage::disk('local')->delete($existingPath);
+                }
+            }
+
+            $data['logo_data'] = null;
+            $data['logo_mime_type'] = null;
         }
 
         $profile->fill($data)->save();
@@ -46,7 +71,7 @@ class RestaurantProfileController extends Controller
             'id' => $profile->id,
             'name' => $profile->name,
             'history' => $profile->history,
-            'logo_url' => $profile->logoDataUrl(),
+            'logo_url' => $profile->logoUrl(),
         ];
     }
 }

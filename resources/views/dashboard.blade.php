@@ -47,7 +47,7 @@
                 </div>
                 <section class="content-section overview-lower" data-admin-stock-panel hidden>
                     <div class="section-heading"><div><span class="eyebrow">PANTAUAN</span><h2>Stok perlu perhatian</h2></div><button class="text-action" type="button" data-switch-page="foods">Lihat semua <span aria-hidden="true">→</span></button></div>
-                    <div class="auto-delete-notice"><span class="auto-delete-notice-mark" aria-hidden="true">!</span><p><strong>Penghapusan stok otomatis:</strong> menu dengan stok {{ config('inventory.auto_drop_threshold') }} atau kurang akan dikeluarkan dari daftar saat pemeriksaan setiap jam. Setelah masuk tempat sampah, data dihapus permanen dalam 2 menit.</p></div>
+                    <div class="auto-delete-notice"><span class="auto-delete-notice-mark" aria-hidden="true">!</span><p><strong>Penghapusan stok otomatis:</strong> menu dengan stok di bawah {{ config('inventory.auto_drop_threshold') }} akan dikeluarkan dari daftar saat pemeriksaan setiap menit. Setelah masuk tempat sampah, data dihapus permanen dalam 2 menit.</p></div>
                     <div class="table-wrap"><table class="data-table"><thead><tr><th>Nama makanan</th><th>Kategori</th><th>Harga</th><th>Stok tersisa</th><th>Status</th></tr></thead><tbody data-low-stock-rows><tr><td class="table-loading" colspan="5">Mengambil data dapur...</td></tr></tbody></table></div>
                 </section>
                 <section class="content-section recent-section">

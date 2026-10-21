@@ -8,20 +8,20 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 uses(RefreshDatabase::class);
 
 test('automatically soft deletes food and drinks at or below the configured threshold', function () {
-    config(['inventory.auto_drop_threshold' => 8]);
+    config(['inventory.auto_drop_threshold' => 10]);
 
-    $category = Kategoris::create(['nama_kategori' => 'Makanan Berat']);
+    $category = Kategoris::firstOrCreate(['nama_kategori' => 'Makanan Berat']);
     $lowStockFood = Makanans::create([
-        'nama_makanan' => 'Menu stok rendah',
+        'nama_makanan' => 'Menu stok sembilan',
         'kategori_id' => $category->id,
         'harga' => 10000,
-        'stok' => 8,
+        'stok' => 9,
     ]);
     $availableFood = Makanans::create([
-        'nama_makanan' => 'Menu stok cukup',
+        'nama_makanan' => 'Menu stok sepuluh',
         'kategori_id' => $category->id,
         'harga' => 12000,
-        'stok' => 9,
+        'stok' => 10,
     ]);
     $lowStockDrink = Minuman::create([
         'nama_minuman' => 'Jus stok rendah',
@@ -29,9 +29,9 @@ test('automatically soft deletes food and drinks at or below the configured thre
         'stok' => 5,
     ]);
     $availableDrink = Minuman::create([
-        'nama_minuman' => 'Jus stok cukup',
+        'nama_minuman' => 'Jus stok sepuluh',
         'harga' => 9000,
-        'stok' => 11,
+        'stok' => 10,
     ]);
 
     $this->artisan('makanan:auto-drop-low-stock')->assertSuccessful();
@@ -43,11 +43,11 @@ test('automatically soft deletes food and drinks at or below the configured thre
 });
 
 test('admin dashboard explains automatic stock deletion and permanent removal', function () {
-    config(['inventory.auto_drop_threshold' => 6]);
+    config(['inventory.auto_drop_threshold' => 10]);
 
     $this->get('/dashboard')
         ->assertSuccessful()
-        ->assertSee('menu dengan stok 6 atau kurang')
-        ->assertSee('pemeriksaan setiap jam')
+        ->assertSee('menu dengan stok di bawah 10')
+        ->assertSee('pemeriksaan setiap menit')
         ->assertSee('data dihapus permanen dalam 2 menit');
 });

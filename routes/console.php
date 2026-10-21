@@ -19,4 +19,6 @@ Schedule::command('payments:refund-terminal')
 Schedule::command(PurgeExpiredTrashedCatalog::class)
     ->everyTenSeconds()
     ->withoutOverlapping();
-Schedule::command(AutoDropLowStockCommand::class)->hourly();
+Schedule::command(AutoDropLowStockCommand::class)
+    ->everyMinute()
+    ->withoutOverlapping();

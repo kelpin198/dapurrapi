@@ -279,9 +279,16 @@ a {
     margin: 0;
 }
 .text-link {
+    padding: 0;
+    border: 0;
     color: var(--green);
+    background: transparent;
     font-size: 11px;
     font-weight: 600;
+}
+.text-link:disabled {
+    color: #9aa39a;
+    cursor: not-allowed;
 }
 .text-field {
     width: 100%;
@@ -416,6 +423,7 @@ a {
     min-height: 100vh;
     display: grid;
     grid-template-columns: 250px minmax(0, 1fr);
+    animation: dashboard-fade 0.9s ease-out both;
 }
 .sidebar {
     position: sticky;
@@ -426,6 +434,7 @@ a {
     padding: 27px 16px 17px;
     border-right: 1px solid #e8ebe4;
     background: #fff;
+    animation: sidebar-arrive 0.7s cubic-bezier(0.2, 0.75, 0.25, 1) both;
 }
 .sidebar-brand {
     margin: 0 0 48px 6px;
@@ -629,10 +638,26 @@ a {
 }
 .page-panel {
     display: none;
-    animation: rise-in 0.35s ease-out both;
+    animation: dashboard-panel-arrive 0.72s 0.08s
+        cubic-bezier(0.2, 0.75, 0.25, 1) both;
 }
 .page-panel.is-visible {
     display: block;
+}
+.overview-grid .metric {
+    animation: metric-arrive 0.58s cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+.overview-grid .metric:nth-child(2) {
+    animation-delay: 0.12s;
+}
+.overview-grid .metric:nth-child(3) {
+    animation-delay: 0.2s;
+}
+.overview-grid .metric:nth-child(4) {
+    animation-delay: 0.28s;
+}
+.overview-grid .metric:nth-child(5) {
+    animation-delay: 0.36s;
 }
 .page-heading {
     display: flex;
@@ -1302,6 +1327,9 @@ a {
     font-size: 15px;
 }
 .app-dialog {
+    position: fixed;
+    inset: 0;
+    margin: auto;
     width: min(500px, calc(100vw - 32px));
     max-height: min(90dvh, 760px);
     overflow: auto;
@@ -1311,6 +1339,9 @@ a {
     color: var(--ink);
     background: var(--paper);
     box-shadow: 0 24px 70px rgb(22 42 29 / 23%);
+}
+.app-dialog[open] {
+    animation: dialog-arrive 0.28s cubic-bezier(0.2, 0.75, 0.25, 1) both;
 }
 .app-dialog-compact {
     width: min(460px, calc(100vw - 32px));
@@ -1883,6 +1914,54 @@ a {
         transform: scale(1.02);
     }
 }
+@keyframes dashboard-fade {
+    from {
+        opacity: 0.35;
+    }
+    to {
+        opacity: 1;
+    }
+}
+@keyframes sidebar-arrive {
+    from {
+        opacity: 0;
+        transform: translateX(-18px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+@keyframes dashboard-panel-arrive {
+    from {
+        opacity: 0;
+        transform: translateY(24px) scale(0.99);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+@keyframes metric-arrive {
+    from {
+        opacity: 0;
+        transform: translateY(16px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+@keyframes dialog-arrive {
+    from {
+        opacity: 0;
+        transform: translateY(12px) scale(0.985);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
 @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -1962,6 +2041,7 @@ a {
         height: 100dvh;
         box-shadow: 14px 0 38px rgb(24 40 29 / 11%);
         transform: translateX(-110%);
+        animation: none;
         transition: transform 0.22s ease;
         overflow-y: auto;
     }
@@ -2010,6 +2090,25 @@ a {
     .dashboard-content {
         min-height: calc(100dvh - 59px);
         padding: 30px 18px 18px;
+    }
+    .page-panel {
+        animation-duration: 0.48s;
+        animation-delay: 0s;
+    }
+    .overview-grid .metric {
+        animation-duration: 0.4s;
+    }
+    .overview-grid .metric:nth-child(2) {
+        animation-delay: 0.06s;
+    }
+    .overview-grid .metric:nth-child(3) {
+        animation-delay: 0.12s;
+    }
+    .overview-grid .metric:nth-child(4) {
+        animation-delay: 0.18s;
+    }
+    .overview-grid .metric:nth-child(5) {
+        animation-delay: 0.24s;
     }
     .page-heading {
         align-items: flex-start;
