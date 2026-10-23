@@ -26,6 +26,52 @@ Route::get('/reset-password/{token}', static function (string $token) {
 })->name('password.reset');
 Route::view('/dashboard', 'dashboard')->name('dashboard');
 
+Route::get('/__dev/revision', static function () {
+    abort_unless(app()->environment('local'), 404);
+
+    $directories = [
+        'app',
+        'bootstrap',
+        'config',
+        'database/migrations',
+        'database/seeders',
+        'public/images',
+        'resources/css',
+        'resources/js',
+        'resources/views',
+        'routes',
+        'storage/app/private/restaurant-profile',
+    ];
+    $files = [];
+
+    foreach ($directories as $directory) {
+        $absolutePath = base_path($directory);
+
+        if (! is_dir($absolutePath)) {
+            continue;
+        }
+
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($absolutePath, RecursiveDirectoryIterator::SKIP_DOTS)
+        );
+
+        foreach ($iterator as $file) {
+            if (! $file instanceof SplFileInfo || ! $file->isFile()) {
+                continue;
+            }
+
+            $relativePath = str_replace('\\', '/', substr($file->getPathname(), strlen(base_path()) + 1));
+            $files[$relativePath] = [$file->getMTime(), $file->getSize()];
+        }
+    }
+
+    ksort($files);
+
+    return response()->json([
+        'revision' => hash('sha256', json_encode($files, JSON_THROW_ON_ERROR)),
+    ])->header('Cache-Control', 'no-store, no-cache, must-revalidate');
+});
+
 Route::get('/restaurant-logo', static function () {
     $storedLogoPath = RestaurantProfile::storedLogoPath();
 

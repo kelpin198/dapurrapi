@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\MakanansController;
 use App\Http\Controllers\Api\MinumansController;
 use App\Http\Controllers\Api\RestaurantProfileController;
 use App\Http\Controllers\Api\TransaksisController;
+use App\Http\Controllers\UlasansController;
 use Illuminate\Support\Facades\Route;
 
 // Public
@@ -26,8 +27,14 @@ Route::middleware(['auth:sanctum', 'can:customer-access'])->group(function () {
     Route::get('/restaurant-profile', [RestaurantProfileController::class, 'show']);
     Route::get('/makanans', [MakanansController::class, 'index']);
     Route::get('/makanans/{makanan}', [MakanansController::class, 'show']);
+
+    Route::post('/ulasans', [UlasansController::class, 'store']);
+    Route::put('/ulasans/{ulasan}', [UlasansController::class, 'update']);
+    Route::delete('/ulasans/{ulasan}', [UlasansController::class, 'destroy']);
+
     Route::get('/minumans', [MinumansController::class, 'index']);
     Route::get('/minumans/{minuman}', [MinumansController::class, 'show']);
+
     Route::get('/kategoris', [KategorisController::class, 'index']);
     Route::get('/kategoris/{id}', [KategorisController::class, 'show']);
 
@@ -41,6 +48,9 @@ Route::middleware(['auth:sanctum', 'can:manage-catalog'])->group(function () {
     Route::get('/admin/login-activity', [AuthController::class, 'loginActivity']);
     Route::get('/admin/restaurant-profile', [RestaurantProfileController::class, 'show']);
     Route::post('/admin/restaurant-profile', [RestaurantProfileController::class, 'update']);
+    Route::get('/admin/ulasans', [UlasansController::class, 'index']);
+    Route::get('/admin/ulasans/{ulasan}', [UlasansController::class, 'show']);
+    Route::put('/admin/ulasans/{ulasan}/reply', [UlasansController::class, 'reply']);
 
     Route::prefix('admin')->group(function () {
         Route::get('/makanans', [MakanansController::class, 'index']);
@@ -71,5 +81,6 @@ Route::middleware(['auth:sanctum', 'can:manage-catalog'])->group(function () {
         Route::get('/transaksis/{id}', [TransaksisController::class, 'show']);
         Route::put('/transaksis/{id}/status', [TransaksisController::class, 'updateStatus']);
         Route::put('/transaksis/{id}/payment-status', [TransaksisController::class, 'updatePaymentStatus']);
+
     });
 });

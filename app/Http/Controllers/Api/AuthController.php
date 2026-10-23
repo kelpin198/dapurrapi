@@ -192,7 +192,7 @@ class AuthController extends Controller
             return response()->json([
                 'status' => true,
                 'message' => 'Data pengguna berhasil diambil',
-                'data' => $request->user(),
+                'data' => $request->user()->loadCount('ulasans'),
             ], 200);
         } catch (\Throwable $exception) {
             return $this->serverError($exception);

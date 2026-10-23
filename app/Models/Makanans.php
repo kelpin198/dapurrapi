@@ -15,4 +15,9 @@ class Makanans extends Model
     {
         return $this->belongsTo(Kategoris::class);
     }
+
+    public function ulasans()
+    {
+        return $this->hasMany(Ulasans::class, 'makanan_id');
+    }
 }

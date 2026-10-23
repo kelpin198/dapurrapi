@@ -11,6 +11,12 @@ let adminOrderPollingTimer = null;
 let userApprovalPollingTimer = null;
 let userApprovalPollInProgress = false;
 let recentCarouselPage = 0;
+let customerReviewCount = 0;
+const menuImageCache = new Map();
+const menuFallbackImages = {
+    makanan: "/images/nasi-goreng.jpg",
+    minuman: "/images/es-jeruk.jpg",
+};
 window.dapurRapiFoods = [];
 window.dapurRapiDrinks = [];
 window.dapurRapiCategories = [];
@@ -29,6 +35,98 @@ function escapeHtml(value) {
                 "'": "&#039;",
             })[character],
     );
+}
+
+function stripHtml(value) {
+    const parsedValue = new DOMParser().parseFromString(
+        String(value ?? ""),
+        "text/html",
+    );
+
+    return parsedValue.body.textContent.trim();
+}
+
+function normalizeImageSearchText(value) {
+    return String(value ?? "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLocaleLowerCase("id-ID")
+        .replace(/\.(jpe?g|png|webp|gif)$/i, "")
+        .replace(/[^\p{L}\p{N}]+/gu, " ")
+        .trim();
+}
+
+function findMenuImage(productName, productKind) {
+    const normalizedName = normalizeImageSearchText(productName);
+    const cacheKey = `${productKind}:${normalizedName}`;
+    if (menuImageCache.has(cacheKey)) return menuImageCache.get(cacheKey);
+
+    const imageRequest = (async () => {
+        const categoryHint =
+            productKind === "minuman" ? "Indonesian drink" : "Indonesian food";
+        const parameters = new URLSearchParams({
+            action: "query",
+            generator: "search",
+            gsrsearch: `${productName} ${categoryHint}`,
+            gsrnamespace: "6",
+            gsrlimit: "10",
+            prop: "imageinfo",
+            iiprop: "url|extmetadata",
+            iiurlwidth: "720",
+            format: "json",
+            origin: "*",
+        });
+
+        try {
+            const response = await fetch(
+                `https://commons.wikimedia.org/w/api.php?${parameters}`,
+            );
+            if (!response.ok) return null;
+
+            const payload = await response.json();
+            const nameTerms = normalizedName
+                .split(" ")
+                .filter((term) => term.length > 2);
+            const candidates = Object.values(payload.query?.pages ?? {})
+                .map((page) => {
+                    const title = normalizeImageSearchText(
+                        String(page.title ?? "").replace(/^File:/i, ""),
+                    );
+                    const titleTerms = new Set(title.split(" "));
+                    const matchingTerms = nameTerms.filter((term) =>
+                        titleTerms.has(term),
+                    ).length;
+
+                    return {
+                        page,
+                        score:
+                            nameTerms.length > 0
+                                ? matchingTerms / nameTerms.length
+                                : 0,
+                    };
+                })
+                .filter((candidate) => candidate.score >= 0.5)
+                .sort((first, second) => second.score - first.score);
+            const page = candidates[0]?.page;
+            const imageInfo = page?.imageinfo?.[0];
+            if (!imageInfo?.thumburl && !imageInfo?.url) return null;
+
+            const metadata = imageInfo.extmetadata ?? {};
+            const title = String(page.title ?? "").replace(/^File:/, "");
+
+            return {
+                url: imageInfo.thumburl ?? imageInfo.url,
+                pageUrl: `https://commons.wikimedia.org/wiki/${encodeURIComponent(title.replaceAll(" ", "_"))}`,
+                author: stripHtml(metadata.Artist?.value),
+                license: stripHtml(metadata.LicenseShortName?.value),
+            };
+        } catch {
+            return null;
+        }
+    })();
+
+    menuImageCache.set(cacheKey, imageRequest);
+    return imageRequest;
 }
 
 function removeConnectedWhiteLogoBackground(image) {
@@ -182,6 +280,42 @@ function showAuthNotice(message, type = "error") {
         type === "order-confirmation",
     );
     notice.hidden = false;
+}
+
+function initializeTunnelReload() {
+    const environment = document.querySelector('meta[name="app-environment"]');
+    if (environment?.content !== "local") return;
+
+    let currentRevision = null;
+    let reloadRequested = false;
+
+    const checkRevision = async () => {
+        if (reloadRequested || document.visibilityState !== "visible") return;
+
+        try {
+            const response = await fetch(`/__dev/revision?t=${Date.now()}`, {
+                cache: "no-store",
+                headers: { Accept: "application/json" },
+            });
+            if (!response.ok) return;
+
+            const payload = await response.json();
+            if (!currentRevision) {
+                currentRevision = payload.revision;
+                return;
+            }
+
+            if (payload.revision !== currentRevision) {
+                reloadRequested = true;
+                window.location.reload();
+            }
+        } catch {
+            // The tunnel may briefly reconnect; retry on the next interval.
+        }
+    };
+
+    checkRevision();
+    window.setInterval(checkRevision, 5000);
 }
 
 async function requestApi(path, { token, ...options } = {}) {
@@ -623,6 +757,141 @@ function formatDate(value) {
     }).format(new Date(value));
 }
 
+function renderReviewFoodOptions(foods, drinks) {
+    const select = document.querySelector("[data-review-food]");
+    if (!select) return;
+
+    const currentValue = select.value;
+    const menuCount = foods.length + drinks.length;
+    const placeholder = menuCount
+        ? "Pilih makanan atau minuman yang sudah dicoba"
+        : "Belum ada menu yang tersedia";
+    select.innerHTML = [
+        `<option value="">${placeholder}</option>`,
+        ...(foods.length
+            ? [
+                  '<optgroup label="Makanan">',
+                  ...foods.map(
+                      (food) =>
+                          `<option value="makanan:${Number(food.id)}">${escapeHtml(food.nama_makanan)}</option>`,
+                  ),
+                  "</optgroup>",
+              ]
+            : []),
+        ...(drinks.length
+            ? [
+                  '<optgroup label="Minuman">',
+                  ...drinks.map(
+                      (drink) =>
+                          `<option value="minuman:${Number(drink.id)}">${escapeHtml(drink.nama_minuman)}</option>`,
+                  ),
+                  "</optgroup>",
+              ]
+            : []),
+    ].join("");
+    select.value = [...foods, ...drinks].some((item) =>
+        currentValue.endsWith(`:${item.id}`),
+    )
+        ? currentValue
+        : "";
+    select.disabled = menuCount === 0;
+    updateReviewSubmitState();
+}
+
+function updateReviewSubmitState() {
+    const foodSelect = document.querySelector("[data-review-food]");
+    const ratingInput = document.querySelector("[data-review-rating]");
+    const submitButton = document.querySelector(
+        '[data-review-form] button[type="submit"]',
+    );
+
+    if (!foodSelect || !ratingInput || !submitButton) return;
+
+    submitButton.disabled =
+        !foodSelect.value || ratingInput.dataset.ratingTouched !== "true";
+}
+
+function renderAdminReviews(reviews) {
+    const body = document.querySelector("[data-admin-review-rows]");
+    if (!body) return;
+
+    const count = document.querySelector("[data-admin-review-count]");
+    const average = document.querySelector("[data-admin-review-average]");
+    count.textContent = reviews.length.toLocaleString("id-ID");
+    document.querySelector('[data-metric="reviews"]').textContent =
+        reviews.length.toLocaleString("id-ID");
+    const ratingAverage = reviews.length
+        ? reviews.reduce((total, review) => total + Number(review.rating), 0) /
+          reviews.length
+        : null;
+    average.textContent = ratingAverage
+        ? ratingAverage.toLocaleString("id-ID", {
+              minimumFractionDigits: 1,
+              maximumFractionDigits: 1,
+          })
+        : "—";
+
+    if (reviews.length === 0) {
+        body.innerHTML =
+            '<tr><td class="table-empty" colspan="7">Belum ada ulasan pelanggan.</td></tr>';
+        return;
+    }
+
+    body.innerHTML = reviews
+        .map((review) => {
+            const reviewId = Number(review.id);
+            const hasReply = Boolean(review.balasan_admin?.trim());
+            const replyMarkup = hasReply
+                ? `<div class="admin-review-reply-sent"><span class="admin-review-reply-mark" aria-hidden="true">✓</span><p>${escapeHtml(review.balasan_admin)}</p></div>`
+                : `<form class="admin-review-reply-form" data-review-reply-form="${reviewId}"><textarea class="text-field text-area" name="balasan_admin" rows="2" maxlength="2000" aria-label="Balasan untuk ulasan ${reviewId}" placeholder="Tulis balasan..." required></textarea></form>`;
+            const actionMarkup = hasReply
+                ? '<span class="admin-review-replied-status"><span aria-hidden="true">✓</span> Terkirim</span>'
+                : `<button class="table-action" type="submit" form="review-reply-${reviewId}" data-review-reply-submit="${reviewId}">Balas</button>`;
+
+            return `
+                <tr class="admin-review-row${hasReply ? " is-replied" : ""}">
+                    <td><span class="admin-review-id">#${reviewId}</span></td>
+                    <td><strong class="admin-review-customer">${escapeHtml(review.nama_pengulas || "Pelanggan")}</strong></td>
+                    <td><span class="review-menu-kind">${escapeHtml(review.jenis_menu || "Makanan")}</span><span class="admin-review-menu-name">${escapeHtml(review.nama_menu || "Menu")}</span></td>
+                    <td><span class="review-entry-score">${Number(review.rating).toLocaleString("id-ID", { maximumFractionDigits: 1 })} / 10</span></td>
+                    <td class="admin-review-comment">${escapeHtml(review.komentar || "-")}</td>
+                    <td class="admin-review-reply-cell">${replyMarkup}</td>
+                    <td class="admin-review-action-cell">${actionMarkup}</td>
+                </tr>
+            `;
+        })
+        .join("");
+
+    body.querySelectorAll("[data-review-reply-form]").forEach((form) => {
+        form.id = `review-reply-${form.dataset.reviewReplyForm}`;
+    });
+}
+
+function updateCustomerReviewMetric(reviewCount) {
+    customerReviewCount = Number(reviewCount) || 0;
+    const metric = document.querySelector('[data-metric="my-reviews"]');
+    if (metric)
+        metric.textContent = customerReviewCount.toLocaleString("id-ID");
+}
+
+async function loadAdminReviews(token) {
+    if (window.dapurRapiUserRole !== "admin") return;
+
+    const body = document.querySelector("[data-admin-review-rows]");
+    if (!body) return;
+
+    try {
+        const payload = await requestApi("admin/ulasans", { token });
+        renderAdminReviews(unwrapData(payload));
+    } catch {
+        setTableMessage(
+            "[data-admin-review-rows]",
+            "Data ulasan belum dapat dimuat.",
+            7,
+        );
+    }
+}
+
 function formatDateTime(value) {
     if (!value) return "Belum pernah login";
 
@@ -762,13 +1031,13 @@ function renderFoodsTable(foods, total = foods.length) {
                 : `<button class="table-action table-action-buy" type="button" data-food-buy="${Number(food.id)}" ${Number(food.stok) < 1 ? "disabled" : ""}>${Number(food.stok) < 1 ? "Habis" : "Beli"}</button>`;
 
             return `
-		<tr>
-			<td>${escapeHtml(food.nama_makanan)}</td>
-			<td>${escapeHtml(food.kategori?.nama ?? food.nama_kategori ?? "Belum dikategorikan")}</td>
-			<td>${escapeHtml(food.deskripsi || "—")}</td>
-			<td>${escapeHtml(formatCurrency(food.harga))}</td>
-			<td>${escapeHtml(food.stok ?? 0)} unit</td>
-			<td>${actions}</td>
+        <tr class="mobile-data-card">
+            <td class="mobile-card-title">${escapeHtml(food.nama_makanan)}</td>
+            <td data-label="Kategori">${escapeHtml(food.kategori?.nama ?? food.nama_kategori ?? "Belum dikategorikan")}</td>
+            <td data-label="Deskripsi" class="mobile-card-description">${escapeHtml(food.deskripsi || "—")}</td>
+            <td data-label="Harga" class="mobile-card-price">${escapeHtml(formatCurrency(food.harga))}</td>
+            <td data-label="Stok">${escapeHtml(food.stok ?? 0)} unit</td>
+            <td data-label="Aksi" class="mobile-card-actions">${actions}</td>
 		</tr>
 	`;
         })
@@ -798,7 +1067,7 @@ function renderMinumansTable(drinks, total = drinks.length) {
                 ? `<div class="row-actions"><button class="table-action" type="button" data-drink-edit="${Number(drink.id)}">Ubah</button><button class="table-action table-action-danger" type="button" data-drink-delete="${Number(drink.id)}">Hapus</button></div>`
                 : `<button class="table-action table-action-buy" type="button" data-drink-buy="${Number(drink.id)}" ${Number(drink.stok) < 1 ? "disabled" : ""}>${Number(drink.stok) < 1 ? "Habis" : "Beli"}</button>`;
 
-            return `<tr><td>${escapeHtml(drink.nama_minuman)}</td><td>${escapeHtml(drink.kategori?.nama_kategori ?? "Belum dikategorikan")}</td><td>${escapeHtml(drink.deskripsi || "—")}</td><td>${escapeHtml(formatCurrency(drink.harga))}</td><td>${escapeHtml(drink.stok)} unit</td><td>${actions}</td></tr>`;
+            return `<tr class="mobile-data-card"><td class="mobile-card-title">${escapeHtml(drink.nama_minuman)}</td><td data-label="Kategori">${escapeHtml(drink.kategori?.nama_kategori ?? "Belum dikategorikan")}</td><td data-label="Deskripsi" class="mobile-card-description">${escapeHtml(drink.deskripsi || "—")}</td><td data-label="Harga" class="mobile-card-price">${escapeHtml(formatCurrency(drink.harga))}</td><td data-label="Stok">${escapeHtml(drink.stok)} unit</td><td data-label="Aksi" class="mobile-card-actions">${actions}</td></tr>`;
         })
         .join("");
 }
@@ -855,8 +1124,9 @@ function renderOverview(
     });
     document.querySelector('[data-metric-label="low-stock"]').textContent =
         isAdmin ? "Stok menipis" : "Menu terlaris";
-    document.querySelector('[data-metric-icon="low-stock"]').textContent =
-        isAdmin ? "⌁" : "★";
+    document.querySelector('[data-metric-icon="low-stock"]').innerHTML = isAdmin
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.8 19a1.4 1.4 0 0 0 1.2 2h16a1.4 1.4 0 0 0 1.2-2L12 3Z"/><path d="M12 9v5m0 3h.01"/></svg>'
+        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"/></svg>';
     document.querySelector('[data-metric-note="low-stock"]').textContent =
         isAdmin
             ? `makanan dan minuman yang perlu dicek`
@@ -909,47 +1179,58 @@ function renderOverview(
             category: drink.kategori?.nama_kategori ?? "Minuman",
         })),
     ].reverse();
-    const foodImages = {
-        "nasi goreng": "/images/nasi-goreng.jpg",
-        "es jeruk": "/images/es-jeruk.jpg",
-    };
-    const foodImageCredits = {
-        "nasi goreng": {
-            author: "Supardisahabu",
-            license: "CC BY-SA 4.0",
-            url: "https://commons.wikimedia.org/wiki/File:Nasi_Goreng_Kampung.jpg",
-        },
-        "es jeruk": {
-            author: "Fajrotul05",
-            license: "CC BY 2.5",
-            url: "https://commons.wikimedia.org/wiki/File:Es_jeruk.jpg",
-        },
-    };
     const recentContainer = document.querySelector("[data-recent-foods]");
     if (recentContainer) {
         recentCarouselPage = 0;
         recentContainer.scrollLeft = 0;
         recentContainer.innerHTML = recentProducts.length
             ? recentProducts
-                  .map((product) => {
-                      const foodName = product.name
-                          .trim()
-                          .toLocaleLowerCase("id-ID");
-                      const foodImage = foodImages[foodName];
-                      const imageCredit = foodImageCredits[foodName];
-                      const imageCreditMarkup = imageCredit
-                          ? `<a class="recent-photo-credit" href="${imageCredit.url}" target="_blank" rel="noopener noreferrer" title="Foto oleh ${escapeHtml(imageCredit.author)}, ${imageCredit.license}" aria-label="Kredit foto oleh ${escapeHtml(imageCredit.author)}, ${imageCredit.license}">i</a>`
-                          : '<a class="recent-photo-credit" data-food-image-credit hidden target="_blank" rel="noopener noreferrer">i</a>';
-
-                      return `
+                  .map(
+                      (product) => `
 			<article class="recent-card">
-                <div class="recent-photo-wrap"><div class="recent-photo" data-product-id="${escapeHtml(product.id)}" data-product-kind="${product.kind}" role="img" aria-label="${foodImage ? `Foto ${escapeHtml(product.name)}` : `Foto untuk ${escapeHtml(product.name)} belum tersedia`}" ${foodImage ? `style="background-image:url('${foodImage}')"` : ""}></div>${imageCreditMarkup}</div>
+                <div class="recent-photo-wrap"><img class="recent-photo" data-product-id="${escapeHtml(product.id)}" data-product-kind="${product.kind}" src="${menuFallbackImages[product.kind]}" alt="Foto ${escapeHtml(product.name)}"><a class="recent-photo-credit" data-menu-photo-credit hidden target="_blank" rel="noopener noreferrer">i</a></div>
                 <div class="recent-copy"><strong>${escapeHtml(product.name)}</strong><span>${product.kind === "minuman" ? escapeHtml(product.category) : `Makanan · ${escapeHtml(product.category)}`}</span></div>
 			</article>
-		`;
-                  })
+		`,
+                  )
                   .join("")
             : '<div class="empty-inline">Belum ada makanan atau minuman yang terdaftar.</div>';
+
+        recentContainer
+            .querySelectorAll("[data-product-id]")
+            .forEach((image) => {
+                const productName = image.alt.replace(/^Foto /, "");
+                const fallbackImage =
+                    menuFallbackImages[image.dataset.productKind];
+                image.addEventListener(
+                    "error",
+                    () => {
+                        image.src = fallbackImage;
+                    },
+                    { once: true },
+                );
+
+                findMenuImage(productName, image.dataset.productKind).then(
+                    (imageDetails) => {
+                        if (!imageDetails || !image.isConnected) return;
+
+                        image.src = imageDetails.url;
+                        const credit = image.parentElement.querySelector(
+                            "[data-menu-photo-credit]",
+                        );
+                        credit.href = imageDetails.pageUrl;
+                        const creditDetails = [
+                            imageDetails.author,
+                            imageDetails.license,
+                        ].filter(Boolean);
+                        credit.title = creditDetails.length
+                            ? `Sumber foto: ${creditDetails.join(", ")}`
+                            : "Sumber foto di Wikimedia Commons";
+                        credit.setAttribute("aria-label", credit.title);
+                        credit.hidden = false;
+                    },
+                );
+            });
         updateRecentCarouselControls();
     }
 }
@@ -997,6 +1278,10 @@ function renderCategories(categories, foods, drinks) {
 function renderTransactions(transactions, pagination = {}) {
     const body = document.querySelector("[data-transaction-rows]");
     if (!body) return;
+    body.closest("table")?.classList.add(
+        "mobile-card-table",
+        "transaction-data-table",
+    );
 
     currentTransactionPage = Number(pagination.current_page ?? 1);
     const lastPage = Number(pagination.last_page ?? 1);
@@ -1113,14 +1398,14 @@ function renderTransactions(transactions, pagination = {}) {
                 : '<span class="payment-status-label">Belum ada data</span>';
 
             return `
-            <tr data-transaction-row-status="${escapeHtml(status)}" data-transaction-row-payment-status="${escapeHtml(payment?.status ?? "")}" class="${isAdmin && isRefunded ? "transaction-row-refunded" : isAdmin && isCompletedOrPaid ? "transaction-row-completed" : ""}" ${isAdmin && isLocked ? 'aria-disabled="true"' : ""}>
-                <td><span>#${escapeHtml(String(transaction.id).padStart(4, "0"))}</span></td>
-                ${isAdmin ? `<td>${escapeHtml(transaction.user?.name ?? "Pengguna")}</td>` : ""}
-                <td>${foodItems}</td>
-				<td>${escapeHtml(formatDate(transaction.created_at))}</td>
-				<td>${escapeHtml(formatCurrency(transaction.total_harga))}</td>
-				<td>${statusDisplay}</td>
-                <td>${paymentDisplay}</td>
+            <tr class="mobile-data-card ${isAdmin && isRefunded ? "transaction-row-refunded" : isAdmin && isCompletedOrPaid ? "transaction-row-completed" : ""}" data-transaction-row-status="${escapeHtml(status)}" data-transaction-row-payment-status="${escapeHtml(payment?.status ?? "")}" ${isAdmin && isLocked ? 'aria-disabled="true"' : ""}>
+                <td class="mobile-card-title"><span>#${escapeHtml(String(transaction.id).padStart(4, "0"))}</span></td>
+                ${isAdmin ? `<td data-label="Pelanggan">${escapeHtml(transaction.user?.name ?? "Pengguna")}</td>` : ""}
+                <td data-label="Menu" class="mobile-card-description">${foodItems}</td>
+				<td data-label="Tanggal">${escapeHtml(formatDate(transaction.created_at))}</td>
+				<td data-label="Total" class="mobile-card-price">${escapeHtml(formatCurrency(transaction.total_harga))}</td>
+				<td data-label="Status pesanan">${statusDisplay}</td>
+                <td data-label="Pembayaran">${paymentDisplay}</td>
 			</tr>
 		`;
         })
@@ -1290,6 +1575,7 @@ function filterTransactions() {
         .querySelector("[data-transaction-search]")
         .value.trim()
         .toLocaleLowerCase("id-ID");
+
     const selectedStatus = document.querySelector(
         "[data-transaction-status-filter]",
     ).value;
@@ -1488,6 +1774,19 @@ async function loadDashboardData(token) {
         window.dapurRapiUserRole === "admin" ? "Administrator" : "Pengguna";
     document.querySelector("[data-profile-open]").hidden =
         window.dapurRapiUserRole !== "user";
+    document.querySelector("[data-customer-review-nav]").hidden =
+        window.dapurRapiUserRole !== "user";
+    document.querySelector("[data-customer-reviews-panel]").hidden =
+        window.dapurRapiUserRole !== "user";
+    document.querySelector("[data-admin-review-nav]").hidden =
+        window.dapurRapiUserRole !== "admin";
+    document.querySelector("[data-admin-reviews-panel]").hidden =
+        window.dapurRapiUserRole !== "admin";
+    document.querySelector("[data-admin-review-metric]").hidden =
+        window.dapurRapiUserRole !== "admin";
+    document.querySelector("[data-customer-review-metric]").hidden =
+        window.dapurRapiUserRole !== "user";
+    updateCustomerReviewMetric(profile.ulasans_count ?? 0);
     document.querySelector("[data-admin-stock-panel]").hidden =
         window.dapurRapiUserRole !== "admin";
     document.querySelector("[data-login-activity-nav]").hidden =
@@ -1528,7 +1827,12 @@ async function loadDashboardData(token) {
     renderCategories(categories, foods, drinks);
     renderTransactions(transactions, transactionPayload.pagination);
 
+    if (window.dapurRapiUserRole === "user") {
+        renderReviewFoodOptions(foods, drinks);
+    }
+
     if (window.dapurRapiUserRole === "admin") {
+        await loadAdminReviews(token);
         try {
             const loginActivityPayload = await requestApi(
                 "admin/login-activity",
@@ -1915,6 +2219,108 @@ function initializeDashboardActions() {
         });
 
     if (!document.querySelector("[data-dashboard]")) return;
+
+    document
+        .querySelector("[data-review-rating]")
+        ?.addEventListener("input", (event) => {
+            const input = event.currentTarget;
+            const rating = Number(input.value);
+            const progress =
+                ((rating - Number(input.min)) /
+                    (Number(input.max) - Number(input.min))) *
+                100;
+            input.dataset.ratingTouched = "true";
+            input.style.setProperty("--rating-progress", `${progress}%`);
+            const output = document.querySelector(
+                "[data-review-rating-output]",
+            );
+
+            output.innerHTML = `${rating.toLocaleString("id-ID", { maximumFractionDigits: 1 })} <small>/ 10</small>`;
+            updateReviewSubmitState();
+        });
+
+    document
+        .querySelector("[data-review-food]")
+        ?.addEventListener("change", updateReviewSubmitState);
+
+    document
+        .querySelector("[data-review-form]")
+        ?.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            if (window.dapurRapiUserRole !== "user") return;
+
+            const form = event.currentTarget;
+            const button = form.querySelector('button[type="submit"]');
+            const values = Object.fromEntries(new FormData(form));
+            const [menuType, menuId] = String(values.menu_item).split(":");
+            if (
+                form.querySelector("[data-review-rating]").dataset
+                    .ratingTouched !== "true"
+            ) {
+                showDashboardNotice(
+                    "Geser penilaian terlebih dahulu sebelum mengirim ulasan.",
+                );
+                return;
+            }
+            button.disabled = true;
+
+            try {
+                await requestApi("ulasans", {
+                    method: "POST",
+                    token: window.dapurRapiToken,
+                    body: JSON.stringify({
+                        makanan_id:
+                            menuType === "makanan" ? Number(menuId) : null,
+                        minuman_id:
+                            menuType === "minuman" ? Number(menuId) : null,
+                        rating: Number(values.rating),
+                        komentar: values.komentar.trim() || null,
+                    }),
+                });
+                updateCustomerReviewMetric(customerReviewCount + 1);
+                form.reset();
+                const ratingInput = form.querySelector("[data-review-rating]");
+                ratingInput.dataset.ratingTouched = "false";
+                ratingInput.style.setProperty("--rating-progress", "0%");
+                document.querySelector(
+                    "[data-review-rating-output]",
+                ).innerHTML = "— <small>/ 10</small>";
+                updateReviewSubmitState();
+                showDashboardNotice("Ulasanmu berhasil dibagikan.", "success");
+            } catch (error) {
+                showDashboardNotice(error.message);
+            } finally {
+                updateReviewSubmitState();
+            }
+        });
+
+    document
+        .querySelector("[data-admin-review-rows]")
+        ?.addEventListener("submit", async (event) => {
+            const form = event.target.closest("[data-review-reply-form]");
+            if (!form || window.dapurRapiUserRole !== "admin") return;
+
+            event.preventDefault();
+            const reviewId = Number(form.dataset.reviewReplyForm);
+            const button = document.querySelector(
+                `[data-review-reply-submit="${reviewId}"]`,
+            );
+            const reply = new FormData(form).get("balasan_admin").trim();
+            button.disabled = true;
+
+            try {
+                await requestApi(`admin/ulasans/${reviewId}/reply`, {
+                    method: "PUT",
+                    token: window.dapurRapiToken,
+                    body: JSON.stringify({ balasan_admin: reply }),
+                });
+                await loadAdminReviews(window.dapurRapiToken);
+                showDashboardNotice("Balasan berhasil dikirim.", "success");
+            } catch (error) {
+                button.disabled = false;
+                showDashboardNotice(error.message);
+            }
+        });
 
     initializePaymentMethods();
     document
@@ -2577,3 +2983,4 @@ initializeLoginLogo();
 initializeNavigation();
 initializeDashboardActions();
 initializeDashboard();
+initializeTunnelReload();
