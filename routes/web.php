@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\MenuImageController;
 use App\Models\RestaurantProfile;
 use Illuminate\Support\Facades\cache;
 use Illuminate\Support\Facades\File;
@@ -25,6 +26,9 @@ Route::get('/reset-password/{token}', static function (string $token) {
     ]);
 })->name('password.reset');
 Route::view('/dashboard', 'dashboard')->name('dashboard');
+Route::get('/menu-image/{pageId}', MenuImageController::class)
+    ->whereNumber('pageId')
+    ->name('menu-image');
 
 Route::get('/__dev/revision', static function () {
     abort_unless(app()->environment('local'), 404);

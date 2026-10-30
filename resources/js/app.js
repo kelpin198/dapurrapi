@@ -13,10 +13,6 @@ let userApprovalPollInProgress = false;
 let recentCarouselPage = 0;
 let customerReviewCount = 0;
 const menuImageCache = new Map();
-const menuFallbackImages = {
-    makanan: "/images/nasi-goreng.jpg",
-    minuman: "/images/es-jeruk.jpg",
-};
 window.dapurRapiFoods = [];
 window.dapurRapiDrinks = [];
 window.dapurRapiCategories = [];
@@ -56,23 +52,79 @@ function normalizeImageSearchText(value) {
         .trim();
 }
 
+const drinkImageTerms = new Set([
+    "beverage",
+    "boba",
+    "coffee",
+    "drink",
+    "es",
+    "juice",
+    "jus",
+    "kopi",
+    "latte",
+    "lemonade",
+    "milk",
+    "milkshake",
+    "minuman",
+    "soda",
+    "susu",
+    "tea",
+    "teh",
+    "wedang",
+]);
+const foodImageTerms = new Set([
+    "ayam",
+    "beef",
+    "bread",
+    "cake",
+    "chicken",
+    "food",
+    "goreng",
+    "meal",
+    "mie",
+    "nasi",
+    "noodle",
+    "rice",
+    "sate",
+]);
+
+function hasMatchingMenuTerm(title, term) {
+    const termAliases = {
+        coffee: ["kopi"],
+        es: ["ice"],
+        ice: ["es"],
+        juice: ["jus"],
+        jeruk: ["orange", "oranges"],
+        jus: ["juice"],
+        kopi: ["coffee"],
+        milk: ["susu"],
+        susu: ["milk"],
+        tea: ["teh"],
+        teh: ["tea"],
+    };
+    const titleTerms = new Set(title.split(" "));
+
+    return titleTerms.has(term)
+        ? 2
+        : (termAliases[term] ?? []).some((candidate) =>
+                titleTerms.has(candidate),
+            )
+          ? 1
+          : 0;
+}
+
 function findMenuImage(productName, productKind) {
     const normalizedName = normalizeImageSearchText(productName);
     const cacheKey = `${productKind}:${normalizedName}`;
     if (menuImageCache.has(cacheKey)) return menuImageCache.get(cacheKey);
 
     const imageRequest = (async () => {
-        const categoryHint =
-            productKind === "minuman" ? "Indonesian drink" : "Indonesian food";
         const parameters = new URLSearchParams({
             action: "query",
-            generator: "search",
-            gsrsearch: `${productName} ${categoryHint}`,
-            gsrnamespace: "6",
-            gsrlimit: "10",
-            prop: "imageinfo",
-            iiprop: "url|extmetadata",
-            iiurlwidth: "720",
+            list: "search",
+            srsearch: productName,
+            srnamespace: "6",
+            srlimit: "10",
             format: "json",
             origin: "*",
         });
@@ -83,7 +135,25 @@ function findMenuImage(productName, productKind) {
             );
             if (!response.ok) return null;
 
-            const payload = await response.json();
+            const searchPayload = await response.json();
+            const searchResults = searchPayload.query?.search ?? [];
+            if (!searchResults.length) return null;
+
+            const imageParameters = new URLSearchParams({
+                action: "query",
+                pageids: searchResults.map((page) => page.pageid).join("|"),
+                prop: "imageinfo",
+                iiprop: "url|extmetadata",
+                iiurlwidth: "720",
+                format: "json",
+                origin: "*",
+            });
+            const imageResponse = await fetch(
+                `https://commons.wikimedia.org/w/api.php?${imageParameters}`,
+            );
+            if (!imageResponse.ok) return null;
+
+            const payload = await imageResponse.json();
             const nameTerms = normalizedName
                 .split(" ")
                 .filter((term) => term.length > 2);
@@ -93,20 +163,46 @@ function findMenuImage(productName, productKind) {
                         String(page.title ?? "").replace(/^File:/i, ""),
                     );
                     const titleTerms = new Set(title.split(" "));
-                    const matchingTerms = nameTerms.filter((term) =>
-                        titleTerms.has(term),
+                    const termMatchStrengths = nameTerms.map((term) =>
+                        hasMatchingMenuTerm(title, term),
+                    );
+                    const matchingTerms =
+                        termMatchStrengths.filter(Boolean).length;
+                    const exactMatches = termMatchStrengths.filter(
+                        (strength) => strength === 2,
                     ).length;
+                    const isDrinkImage = [...titleTerms].some((term) =>
+                        drinkImageTerms.has(term),
+                    );
+                    const isClearlyFoodImage = [...titleTerms].some((term) =>
+                        foodImageTerms.has(term),
+                    );
 
                     return {
                         page,
+                        isDrinkImage,
+                        isClearlyFoodImage,
+                        exactMatches,
                         score:
                             nameTerms.length > 0
                                 ? matchingTerms / nameTerms.length
                                 : 0,
+                        specificity:
+                            matchingTerms / Math.max(titleTerms.size, 1),
                     };
                 })
-                .filter((candidate) => candidate.score >= 0.5)
-                .sort((first, second) => second.score - first.score);
+                .filter(
+                    (candidate) =>
+                        candidate.score >= 0.5 &&
+                        (productKind !== "minuman" ||
+                            !candidate.isClearlyFoodImage),
+                )
+                .sort(
+                    (first, second) =>
+                        second.score - first.score ||
+                        second.exactMatches - first.exactMatches ||
+                        second.specificity - first.specificity,
+                );
             const page = candidates[0]?.page;
             const imageInfo = page?.imageinfo?.[0];
             if (!imageInfo?.thumburl && !imageInfo?.url) return null;
@@ -115,6 +211,7 @@ function findMenuImage(productName, productKind) {
             const title = String(page.title ?? "").replace(/^File:/, "");
 
             return {
+                pageId: Number(page.pageid),
                 url: imageInfo.thumburl ?? imageInfo.url,
                 pageUrl: `https://commons.wikimedia.org/wiki/${encodeURIComponent(title.replaceAll(" ", "_"))}`,
                 author: stripHtml(metadata.Artist?.value),
@@ -127,6 +224,48 @@ function findMenuImage(productName, productKind) {
 
     menuImageCache.set(cacheKey, imageRequest);
     return imageRequest;
+}
+
+function loadMenuImages(container) {
+    container.querySelectorAll("[data-menu-image]").forEach((image) => {
+        const productName = image.dataset.productName;
+
+        findMenuImage(productName, image.dataset.productKind).then(
+            (imageDetails) => {
+                if (!imageDetails || !image.isConnected) return;
+
+                image.addEventListener(
+                    "load",
+                    () => {
+                        image.hidden = false;
+                        const credit = image.parentElement.querySelector(
+                            "[data-menu-photo-credit]",
+                        );
+                        const creditDetails = [
+                            imageDetails.author,
+                            imageDetails.license,
+                        ].filter(Boolean);
+                        credit.href = imageDetails.pageUrl;
+                        credit.title = creditDetails.length
+                            ? `Sumber foto: ${creditDetails.join(", ")}`
+                            : "Sumber foto di Wikimedia Commons";
+                        credit.setAttribute("aria-label", credit.title);
+                        credit.hidden = false;
+                    },
+                    { once: true },
+                );
+                image.addEventListener(
+                    "error",
+                    () => {
+                        image.hidden = true;
+                    },
+                    { once: true },
+                );
+                image.src = `/menu-image/${imageDetails.pageId}`;
+                image.hidden = false;
+            },
+        );
+    });
 }
 
 function removeConnectedWhiteLogoBackground(image) {
@@ -606,6 +745,30 @@ function unwrapData(payload) {
 
 function collectionTotal(payload, items) {
     return Number(payload?.data?.meta?.total ?? items.length);
+}
+
+async function loadAllCatalogItems(resource, token, firstPayload) {
+    const items = unwrapData(firstPayload);
+    const lastPage = Number(
+        firstPayload?.data?.meta?.last_page ??
+            firstPayload?.data?.last_page ??
+            1,
+    );
+
+    if (lastPage <= 1) return items;
+
+    const remainingPages = await Promise.all(
+        Array.from({ length: lastPage - 1 }, (_, index) =>
+            requestApi(`${catalogApiPath(resource)}?page=${index + 2}`, {
+                token,
+            }),
+        ),
+    );
+
+    return [
+        ...items,
+        ...remainingPages.flatMap((payload) => unwrapData(payload)),
+    ];
 }
 
 function getPendingApprovalIds() {
@@ -1111,6 +1274,7 @@ function renderOverview(
     const metrics = {
         foods: foodTotal,
         drinks: drinkTotal,
+        "total-menus": foodTotal + drinkTotal,
         categories: categories.length,
         "low-stock": isAdmin
             ? lowStockProducts.length
@@ -1122,6 +1286,7 @@ function renderOverview(
         const node = document.querySelector(`[data-metric="${key}"]`);
         if (node) node.textContent = value.toLocaleString("id-ID");
     });
+    document.querySelector("[data-admin-total-menus]").hidden = !isAdmin;
     document.querySelector('[data-metric-label="low-stock"]').textContent =
         isAdmin ? "Stok menipis" : "Menu terlaris";
     document.querySelector('[data-metric-icon="low-stock"]').innerHTML = isAdmin
@@ -1165,20 +1330,13 @@ function renderOverview(
         }
     }
 
-    const recentProducts = [
-        ...foods.map((food) => ({
+    const recentProducts = foods
+        .map((food) => ({
             id: food.id,
             name: food.nama_makanan,
-            kind: "makanan",
             category: food.kategori?.nama ?? food.nama_kategori ?? "Menu dapur",
-        })),
-        ...drinks.map((drink) => ({
-            id: drink.id,
-            name: drink.nama_minuman,
-            kind: "minuman",
-            category: drink.kategori?.nama_kategori ?? "Minuman",
-        })),
-    ].reverse();
+        }))
+        .reverse();
     const recentContainer = document.querySelector("[data-recent-foods]");
     if (recentContainer) {
         recentCarouselPage = 0;
@@ -1188,49 +1346,22 @@ function renderOverview(
                   .map(
                       (product) => `
 			<article class="recent-card">
-                <div class="recent-photo-wrap"><img class="recent-photo" data-product-id="${escapeHtml(product.id)}" data-product-kind="${product.kind}" src="${menuFallbackImages[product.kind]}" alt="Foto ${escapeHtml(product.name)}"><a class="recent-photo-credit" data-menu-photo-credit hidden target="_blank" rel="noopener noreferrer">i</a></div>
-                <div class="recent-copy"><strong>${escapeHtml(product.name)}</strong><span>${product.kind === "minuman" ? escapeHtml(product.category) : `Makanan · ${escapeHtml(product.category)}`}</span></div>
+                <div class="recent-photo-wrap"><img class="recent-photo" data-product-id="${escapeHtml(product.id)}" data-product-kind="makanan" alt="Foto ${escapeHtml(product.name)}" hidden><a class="recent-photo-credit" data-menu-photo-credit hidden target="_blank" rel="noopener noreferrer">i</a></div>
+                <div class="recent-copy"><strong>${escapeHtml(product.name)}</strong><span>Makanan · ${escapeHtml(product.category)}</span></div>
 			</article>
 		`,
                   )
                   .join("")
-            : '<div class="empty-inline">Belum ada makanan atau minuman yang terdaftar.</div>';
+            : '<div class="empty-inline">Belum ada makanan yang terdaftar.</div>';
 
         recentContainer
             .querySelectorAll("[data-product-id]")
             .forEach((image) => {
                 const productName = image.alt.replace(/^Foto /, "");
-                const fallbackImage =
-                    menuFallbackImages[image.dataset.productKind];
-                image.addEventListener(
-                    "error",
-                    () => {
-                        image.src = fallbackImage;
-                    },
-                    { once: true },
-                );
-
-                findMenuImage(productName, image.dataset.productKind).then(
-                    (imageDetails) => {
-                        if (!imageDetails || !image.isConnected) return;
-
-                        image.src = imageDetails.url;
-                        const credit = image.parentElement.querySelector(
-                            "[data-menu-photo-credit]",
-                        );
-                        credit.href = imageDetails.pageUrl;
-                        const creditDetails = [
-                            imageDetails.author,
-                            imageDetails.license,
-                        ].filter(Boolean);
-                        credit.title = creditDetails.length
-                            ? `Sumber foto: ${creditDetails.join(", ")}`
-                            : "Sumber foto di Wikimedia Commons";
-                        credit.setAttribute("aria-label", credit.title);
-                        credit.hidden = false;
-                    },
-                );
+                image.dataset.menuImage = "";
+                image.dataset.productName = productName;
             });
+        loadMenuImages(recentContainer);
         updateRecentCarouselControls();
     }
 }
@@ -1745,8 +1876,12 @@ async function loadDashboardData(token) {
             { token },
         ),
     ]);
-    const foods = unwrapData(foodPayload);
-    const drinks = unwrapData(drinkPayload);
+    const [foods, drinks] = await Promise.all([
+        loadAllCatalogItems("makanans", token, foodPayload),
+        loadAllCatalogItems("minumans", token, drinkPayload),
+    ]);
+    const foodsOnFirstPage = unwrapData(foodPayload);
+    const drinksOnFirstPage = unwrapData(drinkPayload);
     const categories = unwrapData(categoryPayload);
     const transactions = unwrapData(transactionPayload);
     const foodTotal = collectionTotal(foodPayload, foods);
@@ -1817,13 +1952,16 @@ async function loadDashboardData(token) {
         drinks,
         categories,
         transactions,
-        foodTotal + collectionTotal(drinkPayload, drinks),
+        foodTotal,
         collectionTotal(drinkPayload, drinks),
         transactionTotal,
         transactionPayload.top_selling_food,
     );
-    renderFoodsTable(foods, foodTotal);
-    renderMinumansTable(drinks, collectionTotal(drinkPayload, drinks));
+    renderFoodsTable(foodsOnFirstPage, foodTotal);
+    renderMinumansTable(
+        drinksOnFirstPage,
+        collectionTotal(drinkPayload, drinksOnFirstPage),
+    );
     renderCategories(categories, foods, drinks);
     renderTransactions(transactions, transactionPayload.pagination);
 
@@ -2439,10 +2577,12 @@ function initializeDashboardActions() {
         ?.addEventListener("click", () => openCategoryDialog());
 
     let drinkSearchTimeout;
+    let latestDrinkSearchId = 0;
     document
         .querySelector("[data-drink-search]")
         ?.addEventListener("input", (event) => {
             const query = event.currentTarget.value.trim();
+            const searchId = ++latestDrinkSearchId;
             window.clearTimeout(drinkSearchTimeout);
             drinkSearchTimeout = window.setTimeout(async () => {
                 try {
@@ -2450,6 +2590,8 @@ function initializeDashboardActions() {
                         `${catalogApiPath("minumans")}?search=${encodeURIComponent(query)}`,
                         { token: window.dapurRapiToken },
                     );
+                    if (searchId !== latestDrinkSearchId) return;
+
                     const drinks = unwrapData(payload);
                     window.dapurRapiDrinks = drinks;
                     renderMinumansTable(
@@ -2457,6 +2599,8 @@ function initializeDashboardActions() {
                         collectionTotal(payload, drinks),
                     );
                 } catch (error) {
+                    if (searchId !== latestDrinkSearchId) return;
+
                     showDashboardNotice(error.message);
                 }
             }, 250);

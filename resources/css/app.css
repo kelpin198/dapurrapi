@@ -814,6 +814,23 @@ a {
     color: #9b7d30;
     background: var(--yellow-wash);
 }
+.metric-total-menus {
+    border-color: #e9b91f;
+    background: #ffd84d;
+}
+.metric-total-menus .metric-top {
+    color: #654b08;
+}
+.metric-total-menus .metric-number {
+    color: #513a00;
+}
+.metric-total-menus .metric-note {
+    color: #705817;
+}
+.metric-total-menus .metric-icon-yellow {
+    color: #614700;
+    background: #ffe98a;
+}
 .metric-icon-coral {
     color: #a75f45;
     background: #f8e9e1;
@@ -1246,6 +1263,9 @@ a {
     height: 104px;
     background-color: #e9eee5;
     object-fit: cover;
+}
+.recent-photo[hidden] {
+    display: none;
 }
 .recent-photo-credit {
     position: absolute;
@@ -1979,12 +1999,112 @@ a {
     font-size: 12px;
 }
 .restaurant-profile-dialog {
-    width: min(560px, calc(100vw - 32px));
+    width: min(620px, calc(100vw - 32px));
 }
 .restaurant-profile-view {
     display: grid;
-    gap: 22px;
-    padding: 28px;
+    gap: 20px;
+    padding: 18px;
+}
+.customer-restaurant-profile {
+    gap: 0;
+    padding: 0;
+    background: #fff;
+}
+.customer-profile-hero {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    min-height: 178px;
+    overflow: hidden;
+    padding: 30px 34px;
+    color: #fff;
+    background: #2f6249;
+}
+.customer-profile-hero::after {
+    position: absolute;
+    top: -70px;
+    right: -50px;
+    width: 220px;
+    height: 220px;
+    content: "";
+    border: 1px solid rgb(255 255 255 / 15%);
+    border-radius: 50%;
+    box-shadow:
+        0 0 0 22px rgb(255 255 255 / 4%),
+        0 0 0 48px rgb(255 255 255 / 3%);
+    pointer-events: none;
+}
+.customer-restaurant-profile .restaurant-profile-logo {
+    z-index: 1;
+    width: 92px;
+    height: 92px;
+    flex-basis: 92px;
+    border: 3px solid rgb(255 255 255 / 88%);
+    border-radius: 18px;
+    color: #31563f;
+    background: #f5f0df;
+    box-shadow: 0 8px 24px rgb(18 38 25 / 20%);
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 24px;
+}
+.customer-restaurant-profile .restaurant-profile-heading h2,
+.customer-profile-identity h2 {
+    position: relative;
+    z-index: 1;
+    margin: 5px 0 10px;
+    color: #fff;
+    font-family: "Fraunces", Georgia, serif;
+    font-size: 30px;
+    font-weight: 500;
+    line-height: 1.12;
+    overflow-wrap: anywhere;
+}
+.customer-profile-identity {
+    position: relative;
+    z-index: 1;
+    min-width: 0;
+}
+.customer-profile-identity .eyebrow {
+    color: rgb(255 255 255 / 70%);
+}
+.customer-profile-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: rgb(255 255 255 / 86%);
+    font-size: 11px;
+}
+.customer-profile-status > span {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #b8d69b;
+    box-shadow: 0 0 0 4px rgb(184 214 155 / 16%);
+}
+.customer-profile-story {
+    display: grid;
+    gap: 9px;
+    padding: 26px 34px 22px;
+}
+.customer-profile-story .eyebrow {
+    color: #8b968b;
+}
+.customer-profile-story .restaurant-profile-history {
+    color: #5c695e;
+    font-size: 13px;
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+}
+.customer-restaurant-profile .dialog-actions {
+    justify-content: flex-end;
+    margin: 0 34px;
+    padding: 16px 0 24px;
+    border-top: 1px solid #edf0e9;
+}
+.customer-restaurant-profile .dialog-actions .button {
+    min-width: 112px;
 }
 .restaurant-profile-view[hidden],
 .dialog-form[hidden] {
@@ -2630,6 +2750,32 @@ a {
     }
 }
 @media (max-width: 760px) {
+    .restaurant-profile-dialog {
+        width: calc(100vw - 24px);
+        max-height: calc(100dvh - 32px);
+    }
+    .customer-profile-hero {
+        min-height: 150px;
+        gap: 14px;
+        padding: 22px 18px;
+    }
+    .customer-restaurant-profile .restaurant-profile-logo {
+        width: 70px;
+        height: 70px;
+        flex-basis: 70px;
+        border-radius: 14px;
+        font-size: 20px;
+    }
+    .customer-profile-identity h2 {
+        font-size: 24px;
+    }
+    .customer-profile-story {
+        padding: 21px 19px 18px;
+    }
+    .customer-restaurant-profile .dialog-actions {
+        margin: 0 19px;
+        padding: 14px 0 18px;
+    }
     .auth-page {
         background: #f5f7f1;
     }
